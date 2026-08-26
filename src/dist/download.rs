@@ -151,6 +151,11 @@ impl<'a> DownloadCfg<'a> {
         toolchain: &ToolchainDesc,
         cfg: &Cfg<'_>,
     ) -> Result<Option<ManifestWithHash>> {
+        // TUF
+        if cfg.tuf.enabled() {
+            return crate::tuf::dl_v2_manifest(update_hash, toolchain, cfg).await;
+        }
+
         let manifest_url = toolchain.manifest_v2_url(&cfg.dist_root_url, self.process);
         match self
             .download_and_check(&manifest_url, update_hash, None, ".toml")

@@ -24,6 +24,7 @@ use crate::{
         CustomToolchainName, DistributableToolchain, LocalToolchainName, PathBasedToolchainName,
         ResolvableLocalToolchainName, ResolvableToolchainName, Toolchain, ToolchainName,
     },
+    tuf::TufConfig,
     utils,
 };
 
@@ -298,6 +299,10 @@ pub(crate) struct Cfg<'a> {
     /// higher precedence than the `RUSTUP_AUTO_INSTALL` environment variable and the `rustup set
     /// auto-install` setting.
     pub allow_auto_install: bool,
+
+    /// TUF signature validation settings. Parsed from `RUSTUP_TUF_*` but not
+    /// yet consumed anywhere.
+    pub tuf: TufConfig,
 }
 
 impl<'a> Cfg<'a> {
@@ -354,6 +359,8 @@ impl<'a> Cfg<'a> {
         let dist_root_server = dist_root_server(process)?;
         let dist_root = dist_root_server.clone() + "/dist";
 
+        let tuf = TufConfig::from_env(&rustup_dir, process);
+
         let cfg = Self {
             profile_override: None,
             rustup_dir,
@@ -371,6 +378,7 @@ impl<'a> Cfg<'a> {
             current_dir,
             process,
             allow_auto_install,
+            tuf,
         };
 
         // Run some basic checks against the constructed configuration
@@ -1112,6 +1120,7 @@ impl Debug for Cfg<'_> {
             quiet,
             current_dir,
             allow_auto_install,
+            tuf,
             process: _,
         } = self;
 
@@ -1131,6 +1140,7 @@ impl Debug for Cfg<'_> {
             .field("quiet", quiet)
             .field("current_dir", current_dir)
             .field("allow_auto_install", allow_auto_install)
+            .field("tuf", tuf)
             .finish()
     }
 }

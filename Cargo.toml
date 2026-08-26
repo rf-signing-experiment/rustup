@@ -107,6 +107,9 @@ wait-timeout = "0.2"
 xz2 = "0.1.3"
 zstd = { version = "0.13", default-features = false }
 
+# TUF
+tuf = { path = "../rust-tuf/tuf" }
+
 # test only (depends on `test` feature)
 snapbox = { version = "1", features = ["term-svg"], optional = true }
 walkdir = { version = "2", optional = true }
