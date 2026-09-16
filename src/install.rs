@@ -1,8 +1,7 @@
 //! Installation and upgrade of both distribution-managed and local
 //! toolchains
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::Result;
 use tracing::debug;
 
 use crate::{
@@ -21,14 +20,9 @@ pub(crate) enum UpdateStatus {
 }
 
 pub(crate) enum InstallMethod<'cfg, 'a> {
-    Copy {
-        src: &'a Path,
-        dest: &'a CustomToolchainName,
-        cfg: &'cfg Cfg<'cfg>,
-    },
     Link {
         src: &'a Path,
-        dest: &'a CustomToolchainName,
+        toolchain: &'a CustomToolchainName,
         cfg: &'cfg Cfg<'cfg>,
     },
     Dist(DistOptions<'cfg, 'a>),
@@ -37,122 +31,83 @@ pub(crate) enum InstallMethod<'cfg, 'a> {
 impl InstallMethod<'_, '_> {
     // Install a toolchain
     #[tracing::instrument(level = "trace", err(level = "trace"), skip_all)]
-    pub(crate) async fn install(self, manifest: Option<ManifestWithHash>) -> Result<UpdateStatus> {
+    pub(crate) async fn install(
+        self,
+        manifest: Option<ManifestWithHash>,
+    ) -> anyhow::Result<UpdateStatus> {
+        let cfg = match self {
+            Self::Link { cfg, .. } | Self::Dist(DistOptions { cfg, .. }) => cfg,
+        };
+
         // Initialize rayon for use by the remove_dir_all crate limiting the number of threads.
         // This will error if rayon is already initialized but it's fine to ignore that.
         let _ = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.cfg().process.io_thread_count()?.into())
+            .num_threads(cfg.process.io_thread_count()?.into())
             .build_global();
-        match &self {
-            InstallMethod::Copy { .. }
-            | InstallMethod::Link { .. }
-            | InstallMethod::Dist(DistOptions {
-                old_date_version: None,
-                ..
-            }) => debug!("installing toolchain {}", self.dest_basename()),
-            _ => debug!("updating existing install for '{}'", self.dest_basename()),
-        }
 
-        debug!("toolchain directory: {}", self.dest_path().display());
-        let updated = self.run(&self.dest_path(), manifest).await?;
-
-        let status = match updated {
-            false => {
-                debug!("toolchain is already up to date");
-                UpdateStatus::Unchanged
+        let toolchain = match &self {
+            Self::Link { toolchain, .. } => {
+                let toolchain = LocalToolchainName::from((*toolchain).clone());
+                debug!("linking toolchain `{toolchain}`");
+                toolchain
             }
-            true => {
-                debug!("toolchain {} installed", self.dest_basename());
-                match &self {
-                    InstallMethod::Dist(DistOptions {
-                        old_date_version: Some((_, v)),
-                        ..
-                    }) => UpdateStatus::Updated(v.clone()),
-                    InstallMethod::Copy { .. }
-                    | InstallMethod::Link { .. }
-                    | InstallMethod::Dist { .. } => UpdateStatus::Installed,
+            Self::Dist(DistOptions {
+                toolchain,
+                old_date_version,
+                ..
+            }) => {
+                let toolchain = LocalToolchainName::from((*toolchain).clone());
+                match old_date_version {
+                    Some(_) => debug!("updating existing install for `{toolchain}`"),
+                    None => debug!("installing toolchain `{toolchain}`"),
                 }
+                toolchain
             }
         };
 
-        // Final check, to ensure we're installed
-        match Toolchain::exists(self.cfg(), &self.local_name())? {
-            true => Ok(status),
-            false => Err(RustupError::ToolchainNotInstallable(self.dest_basename()).into()),
-        }
-    }
-
-    async fn run(&self, path: &Path, manifest: Option<ManifestWithHash>) -> Result<bool> {
-        if path.exists() {
-            // Don't uninstall first for Dist method
-            match self {
-                InstallMethod::Dist { .. } => {}
-                _ => {
-                    uninstall(path)?;
-                }
-            }
+        let toolchain_path = &cfg.toolchain_path(&toolchain);
+        debug!("toolchain directory: {}", toolchain_path.display());
+        if toolchain_path.exists() && !matches!(self, Self::Dist { .. }) {
+            uninstall(toolchain_path)?;
         }
 
-        match self {
-            InstallMethod::Copy { src, .. } => {
-                utils::copy_dir(src, path)?;
-                Ok(true)
+        let status = match &self {
+            Self::Link { src, .. } => {
+                utils::symlink_dir(src, toolchain_path)?;
+                UpdateStatus::Installed
             }
-            InstallMethod::Link { src, .. } => {
-                utils::symlink_dir(src, path)?;
-                Ok(true)
-            }
-            InstallMethod::Dist(opts) => {
-                let prefix = &InstallPrefix::from(path.to_owned());
-                let maybe_new_hash = opts.install_into(prefix, manifest).await?;
-
-                if let Some(hash) = maybe_new_hash {
+            Self::Dist(opts) => match opts
+                .install_into(&InstallPrefix::from(toolchain_path.clone()), manifest)
+                .await?
+            {
+                None => UpdateStatus::Unchanged,
+                Some(hash) => {
                     utils::write_file("update hash", &opts.update_hash, &hash)?;
-                    Ok(true)
-                } else {
-                    Ok(false)
+                    match opts {
+                        DistOptions {
+                            old_date_version: Some((_, v)),
+                            ..
+                        } => UpdateStatus::Updated(v.clone()),
+                        _ => UpdateStatus::Installed,
+                    }
                 }
-            }
-        }
-    }
+            },
+        };
 
-    fn cfg(&self) -> &Cfg<'_> {
-        match self {
-            InstallMethod::Copy { cfg, .. } => cfg,
-            InstallMethod::Link { cfg, .. } => cfg,
-            InstallMethod::Dist(DistOptions { cfg, .. }) => cfg,
+        // Final check, to ensure we're installed
+        if !Toolchain::exists(cfg, &toolchain)? {
+            return Err(RustupError::ToolchainNotInstallable(toolchain.to_string()).into());
         }
-    }
 
-    fn local_name(&self) -> LocalToolchainName {
-        match self {
-            InstallMethod::Copy { dest, .. } | InstallMethod::Link { dest, .. } => {
-                (*dest).clone().into()
-            }
-            InstallMethod::Dist(DistOptions {
-                toolchain: desc, ..
-            }) => (*desc).clone().into(),
-        }
-    }
+        match &status {
+            UpdateStatus::Unchanged => debug!("toolchain is already up to date"),
+            _ => debug!("toolchain {toolchain} installed"),
+        };
 
-    fn dest_basename(&self) -> String {
-        self.local_name().to_string()
-    }
-
-    fn dest_path(&self) -> PathBuf {
-        match self {
-            InstallMethod::Copy { cfg, dest, .. } | InstallMethod::Link { cfg, dest, .. } => {
-                cfg.toolchain_path(&(*dest).clone().into())
-            }
-            InstallMethod::Dist(DistOptions {
-                cfg,
-                toolchain: desc,
-                ..
-            }) => cfg.toolchain_path(&(*desc).clone().into()),
-        }
+        Ok(status)
     }
 }
 
-pub(crate) fn uninstall(path: &Path) -> Result<()> {
+pub(crate) fn uninstall(path: &Path) -> anyhow::Result<()> {
     utils::remove_dir("install", path)
 }

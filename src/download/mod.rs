@@ -1,15 +1,17 @@
 //! Easy file downloading
 
-use std::fs::{self, OpenOptions, remove_file};
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::num::NonZero;
-use std::path::Path;
-use std::str::FromStr;
 #[cfg(feature = "reqwest-rustls-tls")]
 use std::sync::Arc;
 #[cfg(any(feature = "reqwest-rustls-tls", feature = "reqwest-native-tls"))]
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::{
+    fs::{self, OpenOptions, remove_file},
+    io::{self, Read, Seek, SeekFrom, Write},
+    num::NonZero,
+    path::Path,
+    str::FromStr,
+    time::Duration,
+};
 
 use anyhow::{Context, anyhow};
 use reqwest::{Client, ClientBuilder, Proxy, header};
@@ -384,9 +386,7 @@ fn rustls_client(timeout: Duration) -> Result<&'static Client, DownloadError> {
         Verifier::new_with_extra_roots(RUSTUP_TRUST_ANCHORS.iter().cloned(), provider.clone());
     #[cfg(target_os = "android")]
     let result = Verifier::new(provider.clone());
-    let verifier = result.map_err(|err| {
-        DownloadError::Message(format!("failed to initialize platform verifier: {err}"))
-    })?;
+    let verifier = result.map_err(DownloadError::PlatformVerifierInit)?;
 
     let mut tls_config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
@@ -446,5 +446,8 @@ enum DownloadError {
     IoError(#[from] io::Error),
     #[cfg(any(feature = "reqwest-rustls-tls", feature = "reqwest-native-tls"))]
     #[error(transparent)]
-    Reqwest(#[from] ::reqwest::Error),
+    Reqwest(#[from] reqwest::Error),
+    #[cfg(feature = "reqwest-rustls-tls")]
+    #[error("failed to initialize platform verifier")]
+    PlatformVerifierInit(#[source] rustls::Error),
 }

@@ -2,23 +2,31 @@
 //! for installing from a directory or tarball to an installation
 //! prefix, represented by a `Components` instance.
 
-use std::collections::{HashMap, HashSet};
-use std::io::{self, BufRead, ErrorKind as IOErrorKind, Read};
-use std::mem;
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    io::{self, BufRead, ErrorKind as IOErrorKind, Read},
+    mem,
+    ops::Deref,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, anyhow, bail};
 use tar::EntryType;
 use tracing::warn;
 
-use crate::diskio::{ChunkWriter, CompletedIo, Executor, IO_CHUNK_SIZE, Item, Kind};
-use crate::dist::component::components::{ComponentPart, ComponentPartKind, Components};
-use crate::dist::component::transaction::Transaction;
-use crate::dist::manifest::CompressionKind;
-use crate::dist::temp;
-use crate::errors::RustupError;
-use crate::utils;
+use crate::{
+    diskio::{ChunkWriter, CompletedIo, Executor, IO_CHUNK_SIZE, Item, Kind},
+    dist::{
+        component::{
+            components::{ComponentPart, ComponentPartKind, Components},
+            transaction::Transaction,
+        },
+        manifest::CompressionKind,
+        temp,
+    },
+    errors::RustupError,
+    utils,
+};
 
 /// The current metadata revision used by rust-installer
 pub(crate) const INSTALLER_VERSION: &str = "3";
@@ -37,7 +45,7 @@ impl DirectoryPackage<temp::Dir> {
         kind: CompressionKind,
         temp_dir: temp::Dir,
         io_executor: Box<dyn Executor>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         match kind {
             CompressionKind::GZip => Self::from_tar(
                 flate2::bufread::GzDecoder::new(stream),
@@ -59,7 +67,7 @@ impl DirectoryPackage<temp::Dir> {
         stream: impl Read,
         temp_dir: temp::Dir,
         io_executor: Box<dyn Executor>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let mut archive = tar::Archive::new(stream);
 
         // The rust-installer packages unpack to a directory called
@@ -73,7 +81,7 @@ impl DirectoryPackage<temp::Dir> {
 }
 
 impl<P: Deref<Target = Path>> DirectoryPackage<P> {
-    pub fn new(path: P, copy: bool) -> Result<Self> {
+    pub fn new(path: P, copy: bool) -> anyhow::Result<Self> {
         let file = utils::read_file("installer version", &path.join(VERSION_FILE))?;
         let v = file.trim();
         if v != INSTALLER_VERSION {
@@ -104,7 +112,7 @@ impl<P: Deref<Target = Path>> DirectoryPackage<P> {
         name: &str,
         short_name: Option<&str>,
         tx: Transaction,
-    ) -> Result<Transaction> {
+    ) -> anyhow::Result<Transaction> {
         let actual_name = if self.components.contains(name) {
             name
         } else if let Some(n) = short_name {
@@ -128,16 +136,16 @@ impl<P: Deref<Target = Path>> DirectoryPackage<P> {
             match part.kind {
                 ComponentPartKind::File => {
                     if self.copy {
-                        builder.copy_file(path.clone(), &src_path)?
+                        builder.copy_file(path, &src_path)?
                     } else {
-                        builder.move_file(path.clone(), &src_path)?
+                        builder.move_file(path, &src_path)?
                     }
                 }
                 ComponentPartKind::Dir => {
                     if self.copy {
-                        builder.copy_dir(path.clone(), &src_path)?
+                        builder.copy_dir(path, &src_path)?
                     } else {
-                        builder.move_dir(path.clone(), &src_path)?
+                        builder.move_dir(path, &src_path)?
                     }
                 }
                 _ => return Err(RustupError::CorruptComponent(name.to_owned()).into()),
@@ -189,7 +197,7 @@ fn trigger_children(
     io_executor: &dyn Executor,
     directories: &mut HashMap<PathBuf, DirStatus>,
     op: CompletedIo,
-) -> Result<usize> {
+) -> anyhow::Result<usize> {
     let mut result = 0;
     if let CompletedIo::Item(item) = op
         && let Kind::Directory = item.kind
@@ -227,7 +235,7 @@ fn unpack_without_first_dir<R: Read>(
     archive: &mut tar::Archive<R>,
     path: &Path,
     mut io_executor: Box<dyn Executor>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let entries = archive.entries()?;
     let mut directories: HashMap<PathBuf, DirStatus> = HashMap::new();
     // Path is presumed to exist. Call it a precondition.
@@ -279,7 +287,7 @@ fn unpack_without_first_dir<R: Read>(
             directories: &mut HashMap<PathBuf, DirStatus>,
             mut sender_entry: Option<&mut SenderEntry<'_, R>>,
             full_path: P,
-        ) -> Result<bool> {
+        ) -> anyhow::Result<bool> {
             let mut result = sender_entry.is_none();
             for mut op in io_executor.completed().collect::<Vec<_>>() {
                 // TODO capture metrics

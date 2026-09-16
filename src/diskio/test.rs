@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
-
 use super::{Executor, Item, Kind, get_executor};
-use crate::process::TestProcess;
-use crate::test::test_dir;
+use crate::{process::TestProcess, test::test_dir};
 
 impl Item {
     /// The length of the file, for files (for stats)
@@ -16,7 +13,7 @@ impl Item {
     }
 }
 
-fn test_incremental_file(io_threads: &str) -> Result<()> {
+fn test_incremental_file(io_threads: &str) -> anyhow::Result<()> {
     let work_dir = test_dir()?;
     let mut vars = HashMap::new();
     vars.insert("RUSTUP_IO_THREADS".to_string(), io_threads.to_string());
@@ -85,7 +82,7 @@ fn test_incremental_file(io_threads: &str) -> Result<()> {
     Ok(())
 }
 
-fn test_complete_file(io_threads: &str) -> Result<()> {
+fn test_complete_file(io_threads: &str) -> anyhow::Result<()> {
     let work_dir = test_dir()?;
     let mut vars = HashMap::new();
     vars.insert("RUSTUP_IO_THREADS".to_string(), io_threads.to_string());

@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     env::consts::EXE_SUFFIX,
+    ffi::OsStr,
     fmt,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -12,23 +13,27 @@ use std::{
 
 use anstream::ColorChoice;
 use anstyle::Style;
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Context as _, Error, anyhow};
 use clap::{
     Args, CommandFactory, Parser, Subcommand, ValueEnum,
     builder::{PossibleValue, ValueHint},
 };
 use clap_cargo::style::{CONTEXT, ERROR, GOOD, HEADER, TRANSIENT, WARN};
-use clap_complete::Shell;
+use clap_complete::{
+    Shell,
+    engine::{ArgValueCompleter, CompletionCandidate},
+};
 use futures_util::stream::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use itertools::Itertools;
+use serde::Serialize;
 use tokio::sync::Semaphore;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload::Handle};
 
 use crate::{
     cli::{
-        common::{self, PackageUpdate, update_console_filter},
+        common::{self, PackageUpdate, report_error, update_console_filter},
         docs,
         errors::CliError,
         help::{
@@ -42,7 +47,7 @@ use crate::{
         self_update::{self, SelfUpdateMode, check_rustup_update},
     },
     command, component_for_bin,
-    config::{ActiveSource, Cfg},
+    config::{ActiveSource, Cfg, OverrideCfg, OverrideFile},
     dist::{
         DistOptions, PartialToolchainDesc, Profile, Switch, TargetTuple,
         download::DownloadCfg,
@@ -53,8 +58,8 @@ use crate::{
     process::{ColorableTerminal, Process},
     toolchain::{
         CustomToolchainName, DistributableToolchain, LocalToolchainName,
-        MaybeResolvableToolchainName, ResolvableLocalToolchainName, ResolvableToolchainName,
-        Toolchain, ToolchainName,
+        MaybeResolvableToolchainName, Override, ResolvableLocalToolchainName,
+        ResolvableToolchainName, Toolchain, ToolchainName,
     },
     utils::{self, ExitCode},
 };
@@ -62,7 +67,7 @@ use crate::{
 const TOOLCHAIN_OVERRIDE_ERROR: &str = "To override the toolchain using the 'rustup +toolchain' syntax, \
                         make sure to prefix the toolchain override with a '+'";
 
-fn handle_epipe(res: Result<ExitCode>) -> Result<ExitCode> {
+fn handle_epipe(res: anyhow::Result<ExitCode>) -> anyhow::Result<ExitCode> {
     match res {
         Err(e) => {
             let root = e.root_cause();
@@ -102,16 +107,18 @@ struct Rustup {
         value_parser = plus_toolchain_value_parser,
         value_hint = ValueHint::Other,
     )]
-    plus_toolchain: Option<ResolvableToolchainName>,
+    plus_toolchain: Option<Override<ResolvableLocalToolchainName>>,
 
     #[command(subcommand)]
     subcmd: Option<RustupSubcmd>,
 }
 
-fn plus_toolchain_value_parser(s: &str) -> clap::error::Result<ResolvableToolchainName> {
+fn plus_toolchain_value_parser(
+    s: &str,
+) -> clap::error::Result<Override<ResolvableLocalToolchainName>> {
     use clap::{Error, error::ErrorKind};
     if let Some(stripped) = s.strip_prefix('+') {
-        ResolvableToolchainName::from_str(stripped)
+        Override::<ResolvableLocalToolchainName>::from_str(stripped)
             .map_err(|e| Error::raw(ErrorKind::InvalidValue, e))
     } else {
         Err(Error::raw(
@@ -154,7 +161,7 @@ enum RustupSubcmd {
     #[command(after_help = default_help())]
     Default {
         #[arg(help = maybe_resolvable_toolchain_arg_help())]
-        toolchain: Option<MaybeResolvableToolchainName>,
+        toolchain: Option<Override<MaybeResolvableToolchainName>>,
 
         /// Install toolchains that require an emulator. See https://github.com/rust-lang/rustup/wiki/Non-host-toolchains
         #[arg(long)]
@@ -186,6 +193,10 @@ enum RustupSubcmd {
         #[arg(long)]
         no_self_update: bool,
 
+        /// Allow downgrading the toolchain
+        #[arg(long)]
+        allow_downgrade: bool,
+
         /// Force an update, even if some components are missing
         #[arg(long)]
         force: bool,
@@ -193,6 +204,10 @@ enum RustupSubcmd {
         /// Install toolchains that require an emulator. See https://github.com/rust-lang/rustup/wiki/Non-host-toolchains
         #[arg(long)]
         force_non_host: bool,
+
+        /// Indicate update status via exit code
+        #[arg(long)]
+        check: bool,
     },
 
     /// Check for updates to Rust toolchains and rustup
@@ -298,7 +313,7 @@ enum RustupSubcmd {
     },
 }
 
-fn update_toolchain_value_parser(s: &str) -> Result<PartialToolchainDesc> {
+fn update_toolchain_value_parser(s: &str) -> anyhow::Result<PartialToolchainDesc> {
     PartialToolchainDesc::from_str(s).inspect_err(|_| {
         if s == "self" {
             info!("if you meant to update rustup itself, use `rustup self update`");
@@ -422,6 +437,13 @@ enum ToolchainSubcmd {
         /// Path to the directory
         path: PathBuf,
     },
+
+    /// Write the active toolchain as an override file
+    Pin {
+        /// Write the toolchain name with host tuple
+        #[arg(long)]
+        qualified: bool,
+    },
 }
 
 #[derive(Debug, Default, Args)]
@@ -477,6 +499,10 @@ struct UpdateOpts {
     /// Set the installed toolchain as the default toolchain
     #[arg(long)]
     default: bool,
+
+    /// Indicate update status via exit code
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Debug, Default, Args)]
@@ -589,7 +615,7 @@ enum OverrideSubcmd {
     #[command(alias = "add")]
     Set {
         #[arg(help = resolvable_toolchain_arg_help())]
-        toolchain: ResolvableToolchainName,
+        toolchain: Override<ResolvableToolchainName>,
 
         /// Path to the directory
         #[arg(long)]
@@ -671,7 +697,13 @@ pub async fn main(
     current_dir: PathBuf,
     process: &Process,
     console_filter: Handle<EnvFilter, Registry>,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
+    let cfg = &mut Cfg::from_env(current_dir, true, false, process)?;
+    clap_complete::CompleteEnv::with_factory(|| completion_command(cfg))
+        .var("RUSTUP_COMPLETE")
+        .bin("rustup")
+        .complete();
+
     self_update::cleanup_self_updater(process)?;
 
     use clap::error::ErrorKind::*;
@@ -683,7 +715,7 @@ pub async fn main(
         }
         Err(err) if err.kind() == DisplayVersion => {
             write!(process.stdout().lock(), "{}", err.render().ansi())?;
-            display_version(current_dir, process).await?;
+            display_version(cfg).await?;
             return Ok(ExitCode::SUCCESS);
         }
         Err(err) => {
@@ -710,12 +742,8 @@ pub async fn main(
         return Ok(ExitCode::FAILURE);
     };
 
-    let cfg = &mut Cfg::from_env(
-        current_dir,
-        matches.quiet,
-        subcmd.allow_auto_install(),
-        process,
-    )?;
+    cfg.quiet = matches.quiet;
+    cfg.allow_auto_install = subcmd.allow_auto_install();
     cfg.toolchain_override = matches.plus_toolchain;
 
     let should_warn = subcmd.should_warn_empty_setup();
@@ -744,16 +772,20 @@ pub async fn main(
         RustupSubcmd::Update {
             toolchain,
             no_self_update,
+            allow_downgrade,
             force,
             force_non_host,
+            check,
         } => {
             update(
                 cfg,
                 UpdateOpts {
                     toolchain,
                     no_self_update,
+                    allow_downgrade,
                     force,
                     force_non_host,
+                    check,
                     ..UpdateOpts::default()
                 },
                 false,
@@ -769,6 +801,7 @@ pub async fn main(
                 toolchain_link(cfg, &toolchain, &path).await
             }
             ToolchainSubcmd::Uninstall { opts } => toolchain_remove(cfg, opts).await,
+            ToolchainSubcmd::Pin { qualified } => pin_active_toolchain(qualified, cfg),
         },
         RustupSubcmd::Check { opts } => check_updates(cfg, opts).await,
         RustupSubcmd::Default {
@@ -859,7 +892,7 @@ pub async fn main(
         }
     }?;
 
-    if should_warn && cfg.list_toolchains()?.is_empty() && cfg.get_default()?.is_none() {
+    if should_warn && cfg.list_toolchains(true)?.is_empty() && cfg.get_default()?.is_none() {
         warn!("no toolchain installed and no default toolchain set\n{DEFAULT_STABLE_HINT}");
     }
 
@@ -870,15 +903,36 @@ pub async fn main(
     Ok(exit_code)
 }
 
+fn completion_command(cfg: &Cfg<'_>) -> clap::Command {
+    let mut toolchains = cfg.list_toolchains(true).unwrap_or_default();
+    toolchains.sort();
+    Rustup::command().mut_arg("+toolchain", move |arg| {
+        arg.add(ArgValueCompleter::new(move |current: &OsStr| {
+            let Some(prefix) = current.to_str() else {
+                return Vec::new();
+            };
+            toolchains
+                .iter()
+                .filter_map(|toolchain| {
+                    let candidate = format!("+{toolchain}");
+                    candidate
+                        .starts_with(prefix)
+                        .then(|| CompletionCandidate::new(candidate))
+                })
+                .collect()
+        }))
+    })
+}
+
 async fn default_(
     cfg: &Cfg<'_>,
-    toolchain: Option<MaybeResolvableToolchainName>,
+    toolchain: Option<Override<MaybeResolvableToolchainName>>,
     force_non_host: bool,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     common::warn_if_host_is_emulated(cfg.process);
 
     if let Some(toolchain) = toolchain {
-        match toolchain.to_owned() {
+        match toolchain.resolve(cfg)? {
             MaybeResolvableToolchainName::None => {
                 cfg.set_default(None)?;
             }
@@ -919,7 +973,7 @@ async fn default_(
     Ok(ExitCode::SUCCESS)
 }
 
-async fn check_updates(cfg: &Cfg<'_>, opts: CheckOpts) -> Result<ExitCode> {
+async fn check_updates(cfg: &Cfg<'_>, opts: CheckOpts) -> anyhow::Result<ExitCode> {
     let t = cfg.process.stdout();
     let use_colors = matches!(t.color_choice(), ColorChoice::Auto | ColorChoice::Always);
     let mut update_available = false;
@@ -1062,7 +1116,7 @@ async fn update(
     cfg: &mut Cfg<'_>,
     opts: UpdateOpts,
     ensure_active_toolchain: bool,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let mut exit_code = ExitCode::SUCCESS;
 
     common::warn_if_host_is_emulated(cfg.process);
@@ -1128,7 +1182,7 @@ async fn update(
             )?;
 
             if opts.r#override {
-                cfg.make_override(&cfg.current_dir, &desc.clone().into())?;
+                cfg.make_override(&cfg.current_dir, &name)?;
             }
 
             if opts.default
@@ -1144,7 +1198,7 @@ async fn update(
         info!("it's active because: {}", source.to_reason());
         exit_code &= self_update_mode.update(should_self_update, &dl_cfg).await?;
     } else {
-        exit_code &= common::update_all_channels(cfg, opts.force).await?;
+        exit_code &= common::update_all_channels(cfg, opts.force, opts.check).await?;
         exit_code &= self_update_mode.update(should_self_update, &dl_cfg).await?;
 
         info!("cleaning up downloads & tmp directories");
@@ -1160,7 +1214,7 @@ async fn run(
     toolchain: ResolvableLocalToolchainName,
     command: Vec<String>,
     install: bool,
-) -> Result<ExitStatus> {
+) -> anyhow::Result<ExitStatus> {
     let toolchain = toolchain.resolve(&cfg.default_host_tuple()?)?;
     let toolchain = Toolchain::from_local(toolchain, install, cfg).await?;
     let cmd = toolchain.command(&command[0])?;
@@ -1171,7 +1225,7 @@ async fn which(
     cfg: &Cfg<'_>,
     binary: &str,
     toolchain: Option<ResolvableToolchainName>,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let (toolchain, _) = cfg
         .local_toolchain(match toolchain {
             Some(name) => Some((
@@ -1206,7 +1260,7 @@ async fn which(
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-async fn show(cfg: &Cfg<'_>, verbose: bool) -> Result<ExitCode> {
+async fn show(cfg: &Cfg<'_>, verbose: bool) -> anyhow::Result<ExitCode> {
     common::warn_if_host_is_emulated(cfg.process);
 
     let t = cfg.process.stdout();
@@ -1229,7 +1283,8 @@ async fn show(cfg: &Cfg<'_>, verbose: bool) -> Result<ExitCode> {
         writeln!(t)?;
     }
 
-    let installed_toolchains = cfg.list_toolchains()?;
+    let mut installed_toolchains = cfg.list_toolchains(cfg.quiet)?;
+    installed_toolchains.sort();
     let active_toolchain_and_source: Option<(ToolchainName, ActiveSource)> =
         if let Ok(Some((LocalToolchainName::Named(toolchain_name), source))) =
             cfg.maybe_ensure_active_toolchain(None).await
@@ -1340,7 +1395,7 @@ async fn show(cfg: &Cfg<'_>, verbose: bool) -> Result<ExitCode> {
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-async fn show_active_toolchain(cfg: &Cfg<'_>, verbose: bool) -> Result<ExitCode> {
+async fn show_active_toolchain(cfg: &Cfg<'_>, verbose: bool) -> anyhow::Result<ExitCode> {
     match cfg.maybe_ensure_active_toolchain(None).await? {
         Some((toolchain_name, source)) => {
             let toolchain = Toolchain::with_source(cfg, toolchain_name, &source)?;
@@ -1371,7 +1426,7 @@ async fn show_active_toolchain(cfg: &Cfg<'_>, verbose: bool) -> Result<ExitCode>
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-fn show_rustup_home(cfg: &Cfg<'_>) -> Result<ExitCode> {
+fn show_rustup_home(cfg: &Cfg<'_>) -> anyhow::Result<ExitCode> {
     writeln!(cfg.process.stdout().lock(), "{}", cfg.rustup_dir.display())?;
     Ok(ExitCode::SUCCESS)
 }
@@ -1381,7 +1436,7 @@ async fn target_list(
     toolchain: Option<PartialToolchainDesc>,
     installed_only: bool,
     quiet: bool,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let toolchain = toolchain.map(|desc| (desc, ActiveSource::CommandLine));
 
     // If a toolchain is Distributable, we can assume it has a manifest and thus print all possible targets and the installed ones.
@@ -1413,9 +1468,9 @@ async fn target_list(
 
 async fn target_add(
     cfg: &Cfg<'_>,
-    mut targets: Vec<String>,
+    targets: Vec<String>,
     toolchain: Option<PartialToolchainDesc>,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     // XXX: long term move this error to cli ? the normal .into doesn't work
     // because Result here is the wrong sort and expression type ascription
     // isn't a feature yet.
@@ -1427,43 +1482,30 @@ async fn target_add(
     )
     .await?;
 
-    let components = distributable.components()?;
-    if targets.contains(&"all".to_string()) {
-        if targets.len() != 1 {
-            return Err(anyhow!(
-                "`rustup target add {}` includes `all`",
-                targets.join(" ")
-            ));
-        }
+    let all = targets.iter().any(|it| it == "all");
+    if all && targets.len() != 1 {
+        return Err(anyhow!(
+            "`rustup target add {}` includes `all`",
+            targets.join(" ")
+        ));
+    }
 
-        targets.clear();
-        for component in components {
-            if component.component.short_name() == "rust-std"
-                && component.available
-                && !component.installed
-            {
-                let target = component
-                    .component
-                    .target
-                    .as_ref()
-                    .expect("rust-std should have a target");
-                targets.push(target.to_string());
-            }
-        }
+    if all {
+        distributable
+            .add_components(distributable.components()?.into_iter().filter_map(|c| {
+                (c.available && !c.installed && c.component.short_name() == "rust-std")
+                    .then_some(c.component)
+            }))
+            .await?;
+
+        return Ok(ExitCode::SUCCESS);
     }
 
     distributable
         .add_components(
             targets
                 .into_iter()
-                .map(|target| {
-                    Component::new(
-                        "rust-std".to_string(),
-                        Some(TargetTuple::new(target)),
-                        false,
-                    )
-                })
-                .collect(),
+                .map(|target| Component::std(TargetTuple::new(target))),
         )
         .await?;
 
@@ -1474,7 +1516,7 @@ async fn target_remove(
     cfg: &Cfg<'_>,
     targets: Vec<String>,
     toolchain: Option<PartialToolchainDesc>,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let distributable = DistributableToolchain::from_partial(
         toolchain.map(|desc| (desc, ActiveSource::CommandLine)),
         cfg,
@@ -1503,8 +1545,9 @@ async fn target_remove(
         if has_at_most_one_target {
             warn!("removing the last target; no build targets will be available");
         }
-        let new_component = Component::new("rust-std".to_string(), Some(target), false);
-        distributable.remove_component(new_component).await?;
+        distributable
+            .remove_component(Component::std(target))
+            .await?;
     }
 
     Ok(ExitCode::SUCCESS)
@@ -1515,7 +1558,7 @@ async fn component_list(
     toolchain: Option<PartialToolchainDesc>,
     installed_only: bool,
     quiet: bool,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let toolchain = toolchain.map(|desc| (desc, ActiveSource::CommandLine));
 
     // downcasting required because the toolchain files can name any toolchain
@@ -1548,7 +1591,7 @@ async fn component_add(
     components: Vec<String>,
     toolchain: Option<PartialToolchainDesc>,
     target: Option<String>,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let distributable = DistributableToolchain::from_partial(
         toolchain.map(|desc| (desc, ActiveSource::CommandLine)),
         cfg,
@@ -1562,7 +1605,8 @@ async fn component_add(
             components
                 .into_iter()
                 .map(|component| Component::try_new(&component, &distributable, target.as_ref()))
-                .collect::<Result<_>>()?,
+                .collect::<anyhow::Result<Vec<_>>>()?
+                .into_iter(),
         )
         .await?;
 
@@ -1583,7 +1627,7 @@ async fn component_remove(
     components: Vec<String>,
     toolchain: Option<PartialToolchainDesc>,
     target: Option<String>,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     let toolchain = toolchain.map(|desc| (desc, ActiveSource::CommandLine));
     let distributable = DistributableToolchain::from_partial(toolchain, cfg).await?;
     let target = get_target(target, &distributable);
@@ -1591,7 +1635,7 @@ async fn component_remove(
     let parsed_components = components
         .iter()
         .map(|component| Component::try_new(component, &distributable, target.as_ref()))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut unknown_components = Vec::new();
 
@@ -1621,7 +1665,11 @@ async fn component_remove(
     }
 }
 
-async fn toolchain_link(cfg: &Cfg<'_>, dest: &CustomToolchainName, src: &Path) -> Result<ExitCode> {
+async fn toolchain_link(
+    cfg: &Cfg<'_>,
+    toolchain: &CustomToolchainName,
+    src: &Path,
+) -> anyhow::Result<ExitCode> {
     cfg.ensure_toolchains_dir()?;
     let mut pathbuf = PathBuf::from(src);
 
@@ -1633,22 +1681,18 @@ async fn toolchain_link(cfg: &Cfg<'_>, dest: &CustomToolchainName, src: &Path) -
     pathbuf.push(format!("rustc{EXE_SUFFIX}"));
     utils::assert_is_file(&pathbuf)?;
 
-    if true {
-        InstallMethod::Link {
-            src: &cfg.current_dir.join(src),
-            dest,
-            cfg,
-        }
-        .install(None)
-        .await?;
-    } else {
-        InstallMethod::Copy { src, dest, cfg }.install(None).await?;
+    InstallMethod::Link {
+        src: &cfg.current_dir.join(src),
+        toolchain,
+        cfg,
     }
+    .install(None)
+    .await?;
 
     Ok(ExitCode::SUCCESS)
 }
 
-async fn toolchain_remove(cfg: &Cfg<'_>, opts: UninstallOpts) -> Result<ExitCode> {
+async fn toolchain_remove(cfg: &Cfg<'_>, opts: UninstallOpts) -> anyhow::Result<ExitCode> {
     let default_toolchain = cfg.get_default().ok().flatten();
     let active_toolchain = cfg
         .maybe_ensure_active_toolchain(Some(false))
@@ -1682,12 +1726,79 @@ async fn toolchain_remove(cfg: &Cfg<'_>, opts: UninstallOpts) -> Result<ExitCode
     Ok(ExitCode::SUCCESS)
 }
 
+fn pin_active_toolchain(qualified: bool, cfg: &Cfg<'_>) -> anyhow::Result<ExitCode> {
+    let default_host = cfg.default_host_tuple()?;
+
+    let (mut r#override, backfill_components) = match cfg.find_override_config()? {
+        Some((o, _)) => (o, None),
+        None => {
+            let default = cfg
+                .get_default_resolvable()?
+                .context("no default toolchain to pin")?;
+            let components = match &default {
+                ResolvableToolchainName::Official(desc) => {
+                    let tc =
+                        DistributableToolchain::new(cfg, desc.clone().resolve(&default_host)?)?;
+                    let manifest = tc.get_manifest()?;
+
+                    Some(
+                        tc.components()?
+                            .into_iter()
+                            .filter_map(|c| {
+                                (c.available && c.installed)
+                                    .then(|| manifest.display_name(&c.component, &default_host))
+                            })
+                            .collect(),
+                    )
+                }
+                ResolvableToolchainName::Custom(_) => None,
+            };
+            (OverrideCfg::from(default), components)
+        }
+    };
+    if qualified {
+        r#override.qualify(&default_host);
+    }
+
+    let mut r#override = OverrideFile::from(r#override);
+    if backfill_components.is_some() {
+        r#override.toolchain.components = backfill_components;
+    }
+
+    let rel_path = "rust-toolchain.toml";
+    let path = cfg.process.current_dir()?.join(rel_path);
+    if path
+        .try_exists()
+        .context("failed to check for existing override file")?
+    {
+        return Err(anyhow!(
+            "found existing override file at '{rel_path}', refusing to overwrite"
+        ));
+    }
+
+    let mut toml_buf = toml::ser::Buffer::new();
+    r#override
+        .serialize(toml::Serializer::new(&mut toml_buf))
+        .context("failed to serialize override file to TOML")?;
+    utils::write_file(
+        "override file",
+        &path,
+        &format!(
+            "# Check the docs at https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file\n\n{toml_buf}",
+        ),
+    )?;
+    Ok(ExitCode::SUCCESS)
+}
+
 async fn override_add(
     cfg: &Cfg<'_>,
-    toolchain: ResolvableToolchainName,
+    toolchain: Override<ResolvableToolchainName>,
     path: Option<&Path>,
-) -> Result<ExitCode> {
-    let toolchain_name = toolchain.resolve(&cfg.default_host_tuple()?)?;
+) -> anyhow::Result<ExitCode> {
+    let toolchain_name = toolchain
+        .clone()
+        .resolve(cfg)?
+        .resolve(&cfg.default_host_tuple()?)?;
     match Toolchain::new(cfg, toolchain_name.clone().into()) {
         Ok(_) => {}
         Err(e @ RustupError::ToolchainNotInstalled { .. }) => match &toolchain_name {
@@ -1706,11 +1817,15 @@ async fn override_add(
         Err(e) => Err(e)?,
     }
 
-    cfg.make_override(path.unwrap_or(&cfg.current_dir), &toolchain_name)?;
+    cfg.make_override(path.unwrap_or(&cfg.current_dir), &toolchain)?;
     Ok(ExitCode::SUCCESS)
 }
 
-fn override_remove(cfg: &Cfg<'_>, path: Option<&Path>, nonexistent: bool) -> Result<ExitCode> {
+fn override_remove(
+    cfg: &Cfg<'_>,
+    path: Option<&Path>,
+    nonexistent: bool,
+) -> anyhow::Result<ExitCode> {
     let paths = if nonexistent {
         let list: Vec<_> = cfg.settings_file.with(|s| {
             Ok(s.overrides
@@ -1747,7 +1862,10 @@ fn override_remove(cfg: &Cfg<'_>, path: Option<&Path>, nonexistent: bool) -> Res
     Ok(ExitCode::SUCCESS)
 }
 
-fn set_auto_self_update(cfg: &Cfg<'_>, auto_self_update_mode: SelfUpdateMode) -> Result<ExitCode> {
+fn set_auto_self_update(
+    cfg: &Cfg<'_>,
+    auto_self_update_mode: SelfUpdateMode,
+) -> anyhow::Result<ExitCode> {
     if cfg!(feature = "no-self-update") {
         let mut args = cfg.process.args_os();
         let arg0 = args.next().map(PathBuf::from);
@@ -1796,7 +1914,7 @@ fn output_completion_script(
     shell: Shell,
     command: CompletionCommand,
     process: &Process,
-) -> Result<ExitCode> {
+) -> anyhow::Result<ExitCode> {
     match command {
         CompletionCommand::Rustup => {
             clap_complete::generate(
@@ -1816,9 +1934,7 @@ fn output_completion_script(
                 Shell::Zsh => "/share/zsh/site-functions/_cargo",
                 _ => {
                     return Err(anyhow!(
-                        "{} does not currently support completions for {}",
-                        command,
-                        shell
+                        "{command} does not currently support completions for {shell}"
                     ));
                 }
             };
@@ -1835,17 +1951,19 @@ fn output_completion_script(
     Ok(ExitCode::SUCCESS)
 }
 
-async fn display_version(current_dir: PathBuf, process: &Process) -> Result<()> {
+async fn display_version(cfg: &mut Cfg<'_>) -> anyhow::Result<()> {
     info!("this is the version for the rustup toolchain manager, not the rustc compiler");
-    let mut cfg = Cfg::from_env(current_dir, true, false, process)?;
     cfg.toolchain_override = cfg
         .process
         .args()
-        .find_map(|arg| arg.strip_prefix('+').map(ResolvableToolchainName::from_str))
+        .find_map(|arg| {
+            arg.strip_prefix('+')
+                .map(Override::<ResolvableLocalToolchainName>::from_str)
+        })
         .transpose()?;
 
     match cfg.maybe_ensure_active_toolchain(None).await {
-        Ok(Some((name, _))) => match Toolchain::new(&cfg, name) {
+        Ok(Some((name, _))) => match Toolchain::new(cfg, name) {
             Ok(tc) => info!(
                 "the currently active `rustc` version is `{}`",
                 tc.rustc_version()
@@ -1856,11 +1974,90 @@ async fn display_version(current_dir: PathBuf, process: &Process) -> Result<()> 
             }) => {
                 info!("the active toolchain `{name}` is not installed");
             }
-            Err(err) => error!("failed to display the current `rustc` version: {err}"),
+            Err(err) => report_error(
+                &anyhow!(err).context("failed to display the current `rustc` version"),
+                cfg.process,
+            ),
         },
         Ok(None) => info!("no `rustc` is currently active"),
-        Err(err) => error!("failed to display the current `rustc` version: {err}"),
+        Err(err) => report_error(
+            &err.context("failed to display the current `rustc` version"),
+            cfg.process,
+        ),
     }
 
     Ok(())
+}
+
+#[cfg(all(test, feature = "test"))]
+mod tests {
+    use std::{
+        collections::{HashMap, HashSet},
+        ffi::OsString,
+        fs,
+    };
+
+    use super::completion_command;
+    use crate::{config::Cfg, process::TestProcess};
+
+    fn complete(cfg: &Cfg<'_>, args: &[&str], index: usize) -> Vec<String> {
+        let mut command = completion_command(cfg);
+        clap_complete::engine::complete(
+            &mut command,
+            args.iter().map(OsString::from).collect(),
+            index,
+            Some(&cfg.current_dir),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|candidate| candidate.get_value().to_string_lossy().into_owned())
+        .collect()
+    }
+
+    #[test]
+    fn dynamic_completion_distinguishes_toolchains_and_subcommands() {
+        let rustup_home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(rustup_home.path().join("toolchains/custom")).unwrap();
+        let vars = HashMap::from([
+            (
+                "RUSTUP_HOME".to_owned(),
+                rustup_home.path().display().to_string(),
+            ),
+            (
+                "RUSTUP_OVERRIDE_UNIX_FALLBACK_SETTINGS".to_owned(),
+                rustup_home
+                    .path()
+                    .join("missing-settings.toml")
+                    .display()
+                    .to_string(),
+            ),
+        ]);
+        let process = TestProcess::new(rustup_home.path(), &["rustup"], vars, "").process;
+        let cfg = Cfg::from_env(rustup_home.path().to_owned(), true, false, &process).unwrap();
+
+        assert_eq!(complete(&cfg, &["rustup", "+cus"], 1), ["+custom"]);
+
+        for (args, index) in [
+            (&["rustup", "component", ""][..], 2),
+            (&["rustup", "+custom", "component", ""][..], 3),
+        ] {
+            let candidates = complete(&cfg, args, index);
+            let candidates = candidates
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>();
+            let expected = HashSet::from(["list", "add", "remove"]);
+            assert!(
+                candidates.is_superset(&expected),
+                "missing component subcommands for {args:?}: {:?}",
+                expected.difference(&candidates).collect::<Vec<_>>()
+            );
+            let root_only = HashSet::from(["install", "toolchain", "show"]);
+            assert!(
+                candidates.is_disjoint(&root_only),
+                "unexpected root-only subcommands for {args:?}: {:?}",
+                candidates.intersection(&root_only).collect::<Vec<_>>()
+            );
+        }
+    }
 }

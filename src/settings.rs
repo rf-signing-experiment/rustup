@@ -1,17 +1,21 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::fmt;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::cli::self_update::SelfUpdateMode;
-use crate::dist::{Profile, Switch};
-use crate::errors::RustupError;
-use crate::utils;
+use crate::{
+    cli::self_update::SelfUpdateMode,
+    dist::{Profile, Switch},
+    errors::RustupError,
+    utils,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SettingsFile {
@@ -27,7 +31,7 @@ impl SettingsFile {
         }
     }
 
-    fn write_settings(&self) -> Result<()> {
+    fn write_settings(&self) -> anyhow::Result<()> {
         let settings = self.cache.borrow();
         utils::write_locked_file(
             "settings",
@@ -37,7 +41,7 @@ impl SettingsFile {
         Ok(())
     }
 
-    fn read_settings(&self) -> Result<()> {
+    fn read_settings(&self) -> anyhow::Result<()> {
         let b = self.cache.borrow();
         if b.is_none() {
             drop(b);
@@ -54,14 +58,20 @@ impl SettingsFile {
         Ok(())
     }
 
-    pub(crate) fn with<T, F: FnOnce(&Settings) -> Result<T>>(&self, f: F) -> Result<T> {
+    pub(crate) fn with<T, F: FnOnce(&Settings) -> anyhow::Result<T>>(
+        &self,
+        f: F,
+    ) -> anyhow::Result<T> {
         self.read_settings()?;
 
         // Settings can no longer be None so it's OK to unwrap
         f(self.cache.borrow().as_ref().unwrap())
     }
 
-    pub(crate) fn with_mut<T, F: FnOnce(&mut Settings) -> Result<T>>(&self, f: F) -> Result<T> {
+    pub(crate) fn with_mut<T, F: FnOnce(&mut Settings) -> anyhow::Result<T>>(
+        &self,
+        f: F,
+    ) -> anyhow::Result<T> {
         self.read_settings()?;
 
         // Settings can no longer be None so it's OK to unwrap
@@ -121,11 +131,11 @@ impl Settings {
         self.overrides.get(&key).cloned()
     }
 
-    pub(crate) fn parse(data: &str) -> Result<Self> {
+    pub(crate) fn parse(data: &str) -> anyhow::Result<Self> {
         toml::from_str(data).context("error parsing settings")
     }
 
-    fn stringify(&self) -> Result<String> {
+    fn stringify(&self) -> anyhow::Result<String> {
         Ok(toml::to_string(self)?)
     }
 }

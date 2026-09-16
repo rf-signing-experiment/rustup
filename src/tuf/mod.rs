@@ -4,8 +4,10 @@
 //! rustup consumes it yet. Every setting comes from an environment variable
 //! read through [`Process`], so the CLI test harness can drive it.
 
-use std::fmt;
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use tracing::trace;
@@ -15,8 +17,10 @@ use crate::process::Process;
 mod manifest;
 mod provider;
 
-pub(crate) use self::manifest::dl_v2_manifest;
-pub(crate) use self::provider::{TufRepository, Verification};
+pub(crate) use self::{
+    manifest::dl_v2_manifest,
+    provider::{TufRepository, Verification},
+};
 
 /// TUF-related settings, resolved from the `RUSTUP_TUF_*` environment variables.
 #[derive(Clone, Debug, Eq, PartialEq)]

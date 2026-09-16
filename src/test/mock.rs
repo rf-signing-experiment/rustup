@@ -1,12 +1,13 @@
 //! Mocks for testing
 
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::path::Path;
-use std::sync::Arc;
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::Path,
+    sync::Arc,
+};
 
-use super::clitools::mock_bin;
-use super::{this_host_tuple, topical_doc_data};
+use super::{clitools::mock_bin, this_host_tuple, topical_doc_data};
 
 // Mock of the on-disk structure of rust-installer installers
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -160,7 +161,7 @@ impl MockInstallerBuilder {
             let mut comp_file = OpenOptions::new()
                 .append(true)
                 .create(true)
-                .open(comp_file.clone())
+                .open(comp_file)
                 .unwrap();
             writeln!(comp_file, "{}", component.name).unwrap();
 

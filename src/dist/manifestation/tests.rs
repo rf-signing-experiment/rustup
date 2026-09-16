@@ -11,13 +11,13 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::anyhow;
 use url::Url;
 
 use crate::{
     config::Cfg,
     dist::{
-        DEFAULT_DIST_SERVER, Profile, TargetTuple, ToolchainDesc,
+        DEFAULT_DIST_SERVER, DistOptions, Profile, TargetTuple, ToolchainDesc,
         download::{DownloadCfg, DownloadTracker},
         manifest::{Component, Manifest},
         manifestation::{Changes, Manifestation, UpdateStatus},
@@ -381,7 +381,7 @@ async fn rename_component_new() {
     assert!(utils::path_exists(cx.prefix.path().join("bin/bonus")));
 }
 
-fn make_manifest_url(dist_server: &Url, toolchain: &ToolchainDesc) -> Result<Url> {
+fn make_manifest_url(dist_server: &Url, toolchain: &ToolchainDesc) -> anyhow::Result<Url> {
     let url = format!(
         "{}/dist/channel-rust-{}.toml",
         dist_server, toolchain.channel
@@ -482,7 +482,7 @@ impl TestContext {
         add: &[Component],
         remove: &[Component],
         force: bool,
-    ) -> Result<UpdateStatus> {
+    ) -> anyhow::Result<UpdateStatus> {
         let dl_cfg = DownloadCfg {
             tmp_cx: self.tmp_cx.clone(),
             download_dir: &self.download_dir,
@@ -520,20 +520,6 @@ impl TestContext {
             .await
     }
 
-    fn uninstall(&self) -> Result<()> {
-        let trip = self.toolchain.target.clone();
-        let manifestation = Manifestation::open(self.prefix.clone(), trip)?;
-        let manifest = manifestation.load_manifest()?.unwrap();
-
-        manifestation.uninstall(
-            &manifest,
-            self.tmp_cx.clone(),
-            self.tp.process.permit_copy_rename(),
-        )?;
-
-        Ok(())
-    }
-
     fn stderr_line_contains(&self, needle: &str) -> bool {
         str::from_utf8(&self.tp.stderr())
             .unwrap()
@@ -563,31 +549,6 @@ async fn initial_install_xz() {
 #[tokio::test]
 async fn initial_install_zst() {
     initial_install(AddZStd).await;
-}
-
-#[tokio::test]
-async fn test_uninstall() {
-    let cx = TestContext::new(None, GZOnly);
-    cx.update_from_dist(&[], &[], false).await.unwrap();
-    cx.uninstall().unwrap();
-
-    assert!(!utils::path_exists(cx.prefix.path().join("bin/rustc")));
-    assert!(!utils::path_exists(
-        cx.prefix.path().join("lib/libstd.rlib")
-    ));
-}
-
-#[tokio::test]
-async fn uninstall_removes_config_file() {
-    let cx = TestContext::new(None, GZOnly);
-    cx.update_from_dist(&[], &[], false).await.unwrap();
-    assert!(utils::path_exists(
-        cx.prefix.manifest_file("multirust-config.toml")
-    ));
-    cx.uninstall().unwrap();
-    assert!(!utils::path_exists(
-        cx.prefix.manifest_file("multirust-config.toml")
-    ));
 }
 
 #[tokio::test]
@@ -790,16 +751,8 @@ async fn unavailable_components_is_target() {
 
     let cx = TestContext::new(Some(edit), GZOnly);
     let adds = [
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     // Update with rust-std
@@ -910,16 +863,8 @@ async fn update_preserves_extensions() {
     let cx = TestContext::new(None, GZOnly);
 
     let adds = vec![
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     change_channel_date(&cx.url, "nightly", "2016-02-01");
@@ -960,16 +905,8 @@ async fn update_makes_no_changes_for_identical_manifest() {
 async fn add_extensions_for_initial_install() {
     let cx = TestContext::new(None, GZOnly);
     let adds = vec![
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
@@ -989,16 +926,8 @@ async fn add_extensions_for_same_manifest() {
     cx.update_from_dist(&[], &[], false).await.unwrap();
 
     let adds = vec![
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
@@ -1023,16 +952,8 @@ async fn add_extensions_for_upgrade() {
     change_channel_date(&cx.url, "nightly", "2016-02-02");
 
     let adds = vec![
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
@@ -1086,11 +1007,7 @@ async fn add_extensions_does_not_remove_other_components() {
     let cx = TestContext::new(None, GZOnly);
     cx.update_from_dist(&[], &[], false).await.unwrap();
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
@@ -1115,25 +1032,13 @@ async fn remove_extensions_for_initial_install() {
 async fn remove_extensions_for_same_manifest() {
     let cx = TestContext::new(None, GZOnly);
     let adds = vec![
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&[], &removes, false).await.unwrap();
 
@@ -1153,27 +1058,15 @@ async fn remove_extensions_for_upgrade() {
     change_channel_date(&cx.url, "nightly", "2016-02-01");
 
     let adds = vec![
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-apple-darwin")),
-            false,
-        ),
-        Component::new(
-            "rust-std".to_string(),
-            Some(TargetTuple::new("i686-unknown-linux-gnu")),
-            false,
-        ),
+        Component::std(TargetTuple::new("i686-apple-darwin")),
+        Component::std(TargetTuple::new("i686-unknown-linux-gnu")),
     ];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
     change_channel_date(&cx.url, "nightly", "2016-02-02");
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&[], &removes, false).await.unwrap();
 
@@ -1271,11 +1164,7 @@ async fn remove_extension_not_installed() {
     let cx = TestContext::new(None, GZOnly);
     cx.update_from_dist(&[], &[], false).await.unwrap();
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&[], &removes, false).await.unwrap();
 }
@@ -1287,19 +1176,11 @@ fn remove_extensions_for_same_manifest_does_not_reinstall_other_components() {}
 #[tokio::test]
 async fn remove_extensions_does_not_remove_other_components() {
     let cx = TestContext::new(None, GZOnly);
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&[], &removes, false).await.unwrap();
 
@@ -1314,19 +1195,11 @@ async fn remove_extensions_does_not_hang_with_concurrent_downloads_override() {
         [("RUSTUP_CONCURRENT_DOWNLOADS".to_owned(), "2".to_owned())].into(),
     );
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&[], &removes, false).await.unwrap();
 
@@ -1338,27 +1211,15 @@ async fn add_and_remove_for_upgrade() {
     let cx = TestContext::new(None, GZOnly);
     change_channel_date(&cx.url, "nightly", "2016-02-01");
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-unknown-linux-gnu")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-unknown-linux-gnu"))];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
     change_channel_date(&cx.url, "nightly", "2016-02-02");
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-unknown-linux-gnu")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-unknown-linux-gnu"))];
 
     cx.update_from_dist(&adds, &removes, false).await.unwrap();
 
@@ -1376,25 +1237,13 @@ async fn add_and_remove_for_upgrade() {
 async fn add_and_remove() {
     let cx = TestContext::new(None, GZOnly);
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-unknown-linux-gnu")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-unknown-linux-gnu"))];
 
     cx.update_from_dist(&adds, &[], false).await.unwrap();
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-unknown-linux-gnu")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-unknown-linux-gnu"))];
 
     cx.update_from_dist(&adds, &removes, false).await.unwrap();
 
@@ -1413,17 +1262,9 @@ async fn add_and_remove_same_component() {
     let cx = TestContext::new(None, GZOnly);
     cx.update_from_dist(&[], &[], false).await.unwrap();
 
-    let adds = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let adds = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
-    let removes = vec![Component::new(
-        "rust-std".to_string(),
-        Some(TargetTuple::new("i686-apple-darwin")),
-        false,
-    )];
+    let removes = vec![Component::std(TargetTuple::new("i686-apple-darwin"))];
 
     cx.update_from_dist(&adds, &removes, false)
         .await
@@ -1573,25 +1414,16 @@ async fn v2_manifest_checksum_mismatch_surfaces_error() {
 
     let tp = TestProcess::new(env::current_dir().unwrap(), &["rustup"], vars, "");
     let cfg = Cfg::from_env(tp.process.current_dir().unwrap(), false, true, &tp.process).unwrap();
-    let dl_cfg = DownloadCfg::new(&cfg);
-    let update_hash = cfg.get_hash_file(&cx.toolchain, true).unwrap();
-    let mut fetched = String::new();
 
-    let err = super::super::try_update_from_dist_(
-        &dl_cfg,
-        &update_hash,
-        &cx.toolchain,
-        Some(Profile::Default),
-        &cx.prefix,
-        false,
-        &[],
-        &[],
-        &mut fetched,
-        &cfg,
-        None,
-    )
-    .await
-    .unwrap_err();
+    let dist_opts =
+        DistOptions::new(&[], &[], &cx.toolchain, Profile::Default, false, &cfg).unwrap();
+    let manifest_result = dist_opts
+        .dl_v2_manifest(&cx.prefix, dist_opts.toolchain)
+        .await;
+    let err = dist_opts
+        .try_update(None, &cx.prefix, manifest_result)
+        .await
+        .unwrap_err();
 
     match err.downcast_ref::<RustupError>() {
         Some(RustupError::ChecksumFailed { .. }) => {}

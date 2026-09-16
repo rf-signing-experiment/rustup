@@ -23,10 +23,9 @@
 //! 1) using a shell script that updates PATH if the path is not in PATH
 //! 2) sourcing this script (`. /path/to/script`) in any appropriate rc file
 
-use std::borrow::Cow;
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::bail;
 
 use super::utils;
 use crate::process::Process;
@@ -40,7 +39,7 @@ pub(crate) struct ShellScript {
 }
 
 // TODO: Update into a bytestring.
-fn cargo_home_str_with_home(home: &str, process: &Process) -> Result<Cow<'static, str>> {
+fn cargo_home_str_with_home(home: &str, process: &Process) -> anyhow::Result<Cow<'static, str>> {
     let path = process.cargo_home()?;
 
     let default_cargo_home = process
@@ -127,7 +126,7 @@ pub(crate) trait UnixShell {
         }
     }
 
-    fn cargo_home_str(&self, process: &Process) -> Result<Cow<'static, str>> {
+    fn cargo_home_str(&self, process: &Process) -> anyhow::Result<Cow<'static, str>> {
         #[cfg(windows)]
         let home = "%USERPROFILE%";
         #[cfg(not(windows))]
@@ -135,11 +134,11 @@ pub(crate) trait UnixShell {
         cargo_home_str_with_home(home, process)
     }
 
-    fn source_string(&self, process: &Process) -> Result<String> {
+    fn source_string(&self, process: &Process) -> anyhow::Result<String> {
         Ok(format!(r#". "{}/env""#, self.cargo_home_str(process)?))
     }
 
-    fn write_script(&self, script: &ShellScript, process: &Process) -> Result<()> {
+    fn write_script(&self, script: &ShellScript, process: &Process) -> anyhow::Result<()> {
         let home = process.cargo_home()?;
         let cargo_bin = format!("{}/bin", self.cargo_home_str(process)?);
         let env_name = home.join(script.name);
@@ -205,9 +204,8 @@ impl UnixShell for Bash {
 struct Zsh;
 
 impl Zsh {
-    fn zdotdir(process: &Process) -> Result<PathBuf> {
-        use std::ffi::OsStr;
-        use std::os::unix::ffi::OsStrExt;
+    fn zdotdir(process: &Process) -> anyhow::Result<PathBuf> {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
         if matches!(process.var("SHELL"), Ok(sh) if sh.contains("zsh")) {
             match process.var("ZDOTDIR") {
@@ -305,7 +303,7 @@ impl UnixShell for Fish {
         }
     }
 
-    fn source_string(&self, process: &Process) -> Result<String> {
+    fn source_string(&self, process: &Process) -> anyhow::Result<String> {
         Ok(format!(
             r#"source "{}/env.fish""#,
             self.cargo_home_str(process)?
@@ -357,14 +355,14 @@ impl UnixShell for Nu {
         }
     }
 
-    fn source_string(&self, process: &Process) -> Result<String> {
+    fn source_string(&self, process: &Process) -> anyhow::Result<String> {
         Ok(format!(
             r#"source "{}/env.nu""#,
             self.cargo_home_str(process)?
         ))
     }
 
-    fn cargo_home_str(&self, process: &Process) -> Result<Cow<'static, str>> {
+    fn cargo_home_str(&self, process: &Process) -> anyhow::Result<Cow<'static, str>> {
         cargo_home_str_with_home("~", process)
     }
 }
@@ -414,7 +412,7 @@ impl UnixShell for Tcsh {
         }
     }
 
-    fn source_string(&self, process: &Process) -> Result<String> {
+    fn source_string(&self, process: &Process) -> anyhow::Result<String> {
         Ok(format!(
             r#"source "{}/env.tcsh""#,
             self.cargo_home_str(process)?
@@ -497,7 +495,7 @@ impl UnixShell for Pwsh {
         }
     }
 
-    fn source_string(&self, process: &Process) -> Result<String> {
+    fn source_string(&self, process: &Process) -> anyhow::Result<String> {
         Ok(format!(r#". "{}/env.ps1""#, self.cargo_home_str(process)?))
     }
 }
@@ -549,14 +547,14 @@ impl UnixShell for Xonsh {
         }
     }
 
-    fn source_string(&self, process: &Process) -> Result<String> {
+    fn source_string(&self, process: &Process) -> anyhow::Result<String> {
         Ok(format!(
             r#"source "{}/env.xsh""#,
             self.cargo_home_str(process)?
         ))
     }
 
-    fn cargo_home_str(&self, process: &Process) -> Result<Cow<'static, str>> {
+    fn cargo_home_str(&self, process: &Process) -> anyhow::Result<Cow<'static, str>> {
         cargo_home_str_with_home("$HOME", process)
     }
 }

@@ -1,7 +1,6 @@
-use std::fmt;
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use super::manifest::Component;
@@ -14,11 +13,11 @@ pub struct Config {
 }
 
 impl Config {
-    pub(crate) fn parse(data: &str) -> Result<Self> {
+    pub(crate) fn parse(data: &str) -> anyhow::Result<Self> {
         toml::from_str(data).context("error parsing config")
     }
 
-    pub(crate) fn stringify(&self) -> Result<String> {
+    pub(crate) fn stringify(&self) -> anyhow::Result<String> {
         Ok(toml::to_string(&self)?)
     }
 }

@@ -1,37 +1,44 @@
-use std::borrow::Cow;
-use std::env::{consts::EXE_SUFFIX, split_paths};
-use std::ffi::{OsStr, OsString};
-use std::fmt;
-use std::io::Write;
-use std::os::windows::ffi::OsStrExt;
-use std::path::Path;
-use std::process::Command;
+use std::{
+    borrow::Cow,
+    env::{consts::EXE_SUFFIX, split_paths},
+    ffi::{OsStr, OsString},
+    fmt,
+    io::Write,
+    os::windows::ffi::OsStrExt,
+    path::Path,
+    process::Command,
+};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, anyhow};
+use itertools::Itertools;
 use tracing::{info, warn};
 #[cfg(any(test, feature = "test"))]
 use windows_registry::Value;
 use windows_registry::{CURRENT_USER, HSTRING, Key};
-use windows_result::HRESULT;
+use windows_result::WIN32_ERROR;
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_INVALID_DATA};
 
-use super::super::errors::CliError;
-use super::common;
-use super::{InstallOpts, install_bins, report_error};
-use crate::cli::markdown::md;
-use crate::dist::TargetTuple;
-use crate::download::DownloadOptions;
-use crate::process::{ColorableTerminal, Process};
-use crate::utils;
+use crate::{
+    cli::{
+        common,
+        errors::CliError,
+        markdown::md,
+        self_update::{InstallOpts, install_bins, report_error},
+    },
+    dist::TargetTuple,
+    download::DownloadOptions,
+    process::{ColorableTerminal, Process},
+    utils,
+};
 
-pub(crate) fn ensure_prompt(process: &Process) -> Result<()> {
+pub(crate) fn ensure_prompt(process: &Process) -> anyhow::Result<()> {
     writeln!(process.stdout().lock(),)?;
     writeln!(process.stdout().lock(), "Press the Enter key to continue.")?;
     common::read_line(process)?;
     Ok(())
 }
 
-fn choice(max: u8, process: &Process) -> Result<Option<u8>> {
+fn choice(max: u8, process: &Process) -> anyhow::Result<Option<u8>> {
     write!(process.stdout().lock(), ">")?;
 
     let _ = std::io::stdout().flush();
@@ -46,7 +53,7 @@ fn choice(max: u8, process: &Process) -> Result<Option<u8>> {
     Ok(r)
 }
 
-pub(crate) fn choose_vs_install(process: &Process) -> Result<Option<VsInstallPlan>> {
+pub(crate) fn choose_vs_install(process: &Process) -> anyhow::Result<Option<VsInstallPlan>> {
     writeln!(
         process.stdout().lock(),
         "\n1) Quick install via the Visual Studio Community installer"
@@ -92,7 +99,7 @@ pub(super) async fn maybe_install_msvc(
     quiet: bool,
     opts: &InstallOpts<'_>,
     process: &Process,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let Some(plan) = do_msvc_check(opts, process) else {
         return Ok(());
     };
@@ -259,7 +266,7 @@ pub(crate) enum ContinueInstall {
 pub(crate) async fn try_install_msvc(
     opts: &InstallOpts<'_>,
     process: &Process,
-) -> Result<ContinueInstall> {
+) -> anyhow::Result<ContinueInstall> {
     // download the installer
     let visual_studio_url = utils::parse_url("https://aka.ms/vs/17/release/vs_community.exe")?;
 
@@ -350,7 +357,7 @@ fn has_windows_sdk_libs(process: &Process) -> bool {
 
 /// Run by rustup-gc-$num.exe to delete CARGO_HOME
 #[tracing::instrument(level = "trace")]
-pub fn complete_windows_uninstall(process: &Process) -> Result<utils::ExitCode> {
+pub fn complete_windows_uninstall(process: &Process) -> anyhow::Result<utils::ExitCode> {
     use std::process::Stdio;
 
     wait_for_parent()?;
@@ -375,16 +382,19 @@ pub fn complete_windows_uninstall(process: &Process) -> Result<utils::ExitCode> 
     Ok(utils::ExitCode(0))
 }
 
-pub(crate) fn wait_for_parent() -> Result<()> {
-    use std::io;
-    use std::mem;
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
-    use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next, TH32CS_SNAPPROCESS,
-    };
-    use windows_sys::Win32::System::Threading::{
-        GetCurrentProcessId, INFINITE, OpenProcess, WaitForSingleObject,
+pub(crate) fn wait_for_parent() -> anyhow::Result<()> {
+    use std::{io, mem};
+
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE, WAIT_OBJECT_0},
+        Storage::FileSystem::SYNCHRONIZE,
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next,
+                TH32CS_SNAPPROCESS,
+            },
+            Threading::{GetCurrentProcessId, INFINITE, OpenProcess, WaitForSingleObject},
+        },
     };
 
     unsafe {
@@ -447,16 +457,19 @@ pub(crate) fn wait_for_parent() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn do_add_to_path(process: &Process) -> Result<()> {
+pub(crate) fn do_add_to_path(process: &Process) -> anyhow::Result<()> {
     let new_path = _with_path_cargo_home_bin(_add_to_path, process)?;
     _apply_new_path(new_path, process)
 }
 
-fn _apply_new_path(new_path: Option<HSTRING>, process: &Process) -> Result<()> {
+fn _apply_new_path(new_path: Option<HSTRING>, process: &Process) -> anyhow::Result<()> {
     use std::ptr;
-    use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutA, WM_SETTINGCHANGE,
+
+    use windows_sys::Win32::{
+        Foundation::{LPARAM, WPARAM},
+        UI::WindowsAndMessaging::{
+            HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutA, WM_SETTINGCHANGE,
+        },
     };
 
     let Some(new_path) = new_path else {
@@ -491,7 +504,7 @@ fn _apply_new_path(new_path: Option<HSTRING>, process: &Process) -> Result<()> {
 // Get the windows PATH variable out of the registry as a String. If
 // this returns None then the PATH variable is not a string and we
 // should not mess with it.
-fn get_windows_path_var(process: &Process) -> Result<Option<HSTRING>> {
+fn get_windows_path_var(process: &Process) -> anyhow::Result<Option<HSTRING>> {
     let environment = process
         .registry_environment_key()
         .context("Failed opening Environment key")?;
@@ -499,14 +512,16 @@ fn get_windows_path_var(process: &Process) -> Result<Option<HSTRING>> {
     let reg_value = environment.get_hstring("PATH");
     match reg_value {
         Ok(val) => Ok(Some(val)),
-        Err(e) if e.code() == HRESULT::from_win32(ERROR_INVALID_DATA) => {
+        Err(e) if e.code() == WIN32_ERROR(ERROR_INVALID_DATA).to_hresult() => {
             warn!(
                 "the registry key HKEY_CURRENT_USER\\Environment\\PATH is not a string. \
                    Not modifying the PATH variable"
             );
             Ok(None)
         }
-        Err(e) if e.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => Ok(Some(HSTRING::new())),
+        Err(e) if e.code() == WIN32_ERROR(ERROR_FILE_NOT_FOUND).to_hresult() => {
+            Ok(Some(HSTRING::new()))
+        }
         Err(e) => Err(e).context(CliError::WindowsUninstallMadness),
     }
 }
@@ -517,7 +532,7 @@ fn _add_to_path(old_path: HSTRING, path_str: HSTRING) -> Option<HSTRING> {
     if old_path.is_empty() {
         Some(path_str)
     } else if old_path
-        .windows(path_str.len())
+        .split(|&c| c == PATH_SEPARATOR)
         .any(|path| *path == *path_str)
     {
         None
@@ -529,31 +544,24 @@ fn _add_to_path(old_path: HSTRING, path_str: HSTRING) -> Option<HSTRING> {
     }
 }
 
-// Returns None if the existing old_path does not need changing
+// Returns the updated PATH string with empty entries and all entries equal to
+// path_str removed, or None if the contents are unchanged.
 fn _remove_from_path(old_path: HSTRING, path_str: HSTRING) -> Option<HSTRING> {
-    let idx = old_path
-        .windows(path_str.len())
-        .position(|path| *path == *path_str)?;
-    // If there's a trailing semicolon (likely, since we probably added one
-    // during install), include that in the substring to remove. We don't search
-    // for that to find the string, because if it's the last string in the path,
-    // there may not be.
-    let mut len = path_str.len();
-    if old_path.get(idx + path_str.len()) == Some(&(b';' as u16)) {
-        len += 1;
-    }
-
-    let mut new_path = old_path[..idx].to_owned();
-    new_path.extend_from_slice(&old_path[idx + len..]);
-    // Don't leave a trailing ; though, we don't want an empty string in the
-    // path.
-    if new_path.last() == Some(&(b';' as u16)) {
-        new_path.pop();
-    }
-    Some(HSTRING::from_wide(&new_path))
+    let new_path = Itertools::intersperse(
+        old_path
+            .split(|&c| c == PATH_SEPARATOR)
+            .filter(|path| !path.is_empty() && **path != *path_str),
+        &[PATH_SEPARATOR],
+    )
+    .flatten()
+    .copied()
+    .collect::<Vec<_>>();
+    (new_path != *old_path).then(|| HSTRING::from_wide(&new_path))
 }
 
-fn _with_path_cargo_home_bin<F>(f: F, process: &Process) -> Result<Option<HSTRING>>
+const PATH_SEPARATOR: u16 = b';' as u16;
+
+fn _with_path_cargo_home_bin<F>(f: F, process: &Process) -> anyhow::Result<Option<HSTRING>>
 where
     F: FnOnce(HSTRING, HSTRING) -> Option<HSTRING>,
 {
@@ -563,7 +571,7 @@ where
     Ok(windows_path.and_then(|old_path| f(old_path, HSTRING::from(path_str.as_path()))))
 }
 
-pub(crate) fn do_remove_from_path(process: &Process) -> Result<()> {
+pub(crate) fn do_remove_from_path(process: &Process) -> anyhow::Result<()> {
     let new_path = _with_path_cargo_home_bin(_remove_from_path, process)?;
     _apply_new_path(new_path, process)
 }
@@ -597,7 +605,7 @@ impl Process {
     }
 }
 
-fn rustup_uninstall_registry_key(process: &Process) -> Result<Key> {
+fn rustup_uninstall_registry_key(process: &Process) -> anyhow::Result<Key> {
     process
         .registry_key(RUSTUP_UNINSTALL_ENTRY, CURRENT_USER)
         .context("Failed creating uninstall key")
@@ -606,13 +614,13 @@ fn rustup_uninstall_registry_key(process: &Process) -> Result<Key> {
 pub(crate) fn update_uninstall_registry_display_version(
     version: &str,
     process: &Process,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     rustup_uninstall_registry_key(process)?
         .set_string("DisplayVersion", version)
         .context("Failed to set `DisplayVersion`")
 }
 
-pub(crate) fn add_uninstall_registry_entry(process: &Process) -> Result<()> {
+pub(crate) fn add_uninstall_registry_entry(process: &Process) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
     let key = rustup_uninstall_registry_key(process)?;
@@ -642,15 +650,15 @@ pub(crate) fn add_uninstall_registry_entry(process: &Process) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn remove_uninstall_registry_entry(process: &Process) -> Result<()> {
+pub(crate) fn remove_uninstall_registry_entry(process: &Process) -> anyhow::Result<()> {
     match CURRENT_USER.remove_tree(process.registry_sub_key_path(RUSTUP_UNINSTALL_ENTRY)) {
         Ok(()) => Ok(()),
-        Err(e) if e.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => Ok(()),
+        Err(e) if e.code() == WIN32_ERROR(ERROR_FILE_NOT_FOUND).to_hresult() => Ok(()),
         Err(e) => Err(anyhow!(e)),
     }
 }
 
-pub(crate) fn run_update(setup_path: &Path, process: &Process) -> Result<utils::ExitCode> {
+pub(crate) fn run_update(setup_path: &Path, process: &Process) -> anyhow::Result<utils::ExitCode> {
     Command::new(setup_path)
         .arg("--self-replace")
         .spawn()
@@ -665,7 +673,7 @@ pub(crate) fn run_update(setup_path: &Path, process: &Process) -> Result<utils::
     Ok(utils::ExitCode(0))
 }
 
-pub(crate) fn self_replace(process: &Process) -> Result<utils::ExitCode> {
+pub(crate) fn self_replace(process: &Process) -> anyhow::Result<utils::ExitCode> {
     wait_for_parent()?;
     install_bins(process)?;
 
@@ -702,15 +710,16 @@ pub(crate) fn self_replace(process: &Process) -> Result<utils::ExitCode> {
 //
 // .. augmented with this SO answer
 // https://stackoverflow.com/questions/10319526/understanding-a-self-deleting-program-in-c
-pub(crate) fn spawn_uninstall_gc(no_modify_path: bool, process: &Process) -> Result<()> {
-    use std::io;
-    use std::ptr;
-    use std::thread;
-    use std::time::Duration;
-    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ, OPEN_EXISTING,
+pub(crate) fn spawn_uninstall_gc(no_modify_path: bool, process: &Process) -> anyhow::Result<()> {
+    use std::{io, ptr, thread, time::Duration};
+
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, GENERIC_READ, INVALID_HANDLE_VALUE},
+        Security::SECURITY_ATTRIBUTES,
+        Storage::FileSystem::{
+            CreateFileW, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            OPEN_EXISTING,
+        },
     };
 
     // CARGO_HOME, hopefully empty except for bin/rustup.exe
@@ -787,7 +796,7 @@ const GC_MODIFY_PATH: &str = "RUSTUP_GC_MODIFY_PATH";
 pub const RUSTUP_REGISTRY_TEST_ID: &str = "RUSTUP_REGISTRY_TEST_ID";
 
 #[cfg(any(test, feature = "test"))]
-pub fn get_path(test_id: &str) -> Result<Option<Value>> {
+pub fn get_path(test_id: &str) -> anyhow::Result<Option<Value>> {
     USER_PATH.get(test_id, CURRENT_USER)
 }
 
@@ -805,18 +814,18 @@ pub struct RegistryValueId {
 
 #[cfg(any(test, feature = "test"))]
 impl RegistryValueId {
-    pub fn get(&self, test_id: &str, parent: &Key) -> Result<Option<Value>> {
+    pub fn get(&self, test_id: &str, parent: &Key) -> anyhow::Result<Option<Value>> {
         let mut options = parent.options();
         options.read().write().create().volatile();
         let sub_key = options.open(format!(r"RustupTest-{test_id}\{}", self.sub_key))?;
         match sub_key.get_value(self.value_name) {
             Ok(val) => Ok(Some(val)),
-            Err(e) if e.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => Ok(None),
+            Err(e) if e.code() == WIN32_ERROR(ERROR_FILE_NOT_FOUND).to_hresult() => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
 
-    pub fn set(&self, new: Option<&Value>, test_id: &str, parent: &Key) -> Result<()> {
+    pub fn set(&self, new: Option<&Value>, test_id: &str, parent: &Key) -> anyhow::Result<()> {
         let mut options = parent.options();
         options.read().write().create().volatile();
         let sub_key = options.open(format!(r"RustupTest-{test_id}\{}", self.sub_key))?;
@@ -824,7 +833,7 @@ impl RegistryValueId {
             Some(new) => Ok(sub_key.set_value(self.value_name, new)?),
             None => match sub_key.remove_value(self.value_name) {
                 Ok(()) => Ok(()),
-                Err(e) if e.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => Ok(()),
+                Err(e) if e.code() == WIN32_ERROR(ERROR_FILE_NOT_FOUND).to_hresult() => Ok(()),
                 Err(e) => Err(e.into()),
             },
         }
@@ -833,14 +842,12 @@ impl RegistryValueId {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::os::windows::ffi::OsStringExt;
+    use std::{collections::HashMap, os::windows::ffi::OsStringExt};
 
     use windows_registry::Type;
 
     use super::*;
-    use crate::process::TestProcess;
-    use crate::test::test_id;
+    use crate::{process::TestProcess, test::test_id};
 
     fn test_process(test_id: &str) -> TestProcess {
         let vars: HashMap<String, String> = [
@@ -855,7 +862,7 @@ mod tests {
     fn clear_path(environment: &Key) {
         match environment.remove_value("PATH") {
             Ok(()) => {}
-            Err(e) if e.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => {}
+            Err(e) if e.code() == WIN32_ERROR(ERROR_FILE_NOT_FOUND).to_hresult() => {}
             Err(e) => panic!("failed to clear PATH: {e}"),
         }
     }
@@ -932,6 +939,44 @@ mod tests {
     }
 
     #[test]
+    fn windows_path_does_not_match_similar_entries() {
+        let target = HSTRING::from(r"C:\tools\bin");
+        let similar_paths = HSTRING::from(r"C:\first;C:\tools\bin-extra;XC:\tools\bin;C:\last");
+        assert_eq!(
+            Some(HSTRING::from(
+                r"C:\tools\bin;C:\first;C:\tools\bin-extra;XC:\tools\bin;C:\last"
+            )),
+            _add_to_path(similar_paths.clone(), target.clone())
+        );
+        assert_eq!(
+            None,
+            _remove_from_path(similar_paths.clone(), target.clone())
+        );
+
+        let old_path =
+            HSTRING::from(r"C:\first;C:\tools\bin-extra;XC:\tools\bin;C:\tools\bin;C:\last");
+        assert_eq!(None, _add_to_path(old_path.clone(), target.clone()));
+        assert_eq!(Some(similar_paths), _remove_from_path(old_path, target));
+    }
+
+    #[test]
+    fn windows_uninstall_removes_empty_path_entries() {
+        for (old_path, expected) in [
+            ("foo;", Some("")),
+            (";foo;bar;", Some("bar")),
+            ("first;;foo;;last", Some("first;last")),
+            (";bar;", Some("bar")),
+            ("", None),
+        ] {
+            assert_eq!(
+                expected.map(HSTRING::from),
+                _remove_from_path(HSTRING::from(old_path), HSTRING::from("foo")),
+                "PATH: {old_path}"
+            );
+        }
+    }
+
+    #[test]
     fn windows_handle_non_unicode_path() {
         let initial_path = vec![
             0xD800, // leading surrogate
@@ -998,7 +1043,7 @@ mod tests {
         let reg_value = environment.get_value("PATH");
         match reg_value {
             Ok(_) => panic!("key not deleted"),
-            Err(e) if e.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND) => {}
+            Err(e) if e.code() == WIN32_ERROR(ERROR_FILE_NOT_FOUND).to_hresult() => {}
             Err(e) => panic!("error {e}"),
         }
     }

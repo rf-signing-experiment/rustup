@@ -1,14 +1,13 @@
 //! Test cases of the rustup command, using v2 manifests, mostly
 //! derived from multirust/test-v2.sh
 
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
+use std::{fs, io::Write, path::PathBuf};
 
-use rustup::dist::TargetTuple;
-use rustup::dist::manifest::Manifest;
-use rustup::test::{
-    CROSS_ARCH1, CROSS_ARCH2, CliTestContext, Config, Scenario, create_hash, this_host_tuple,
+use rustup::{
+    dist::{TargetTuple, manifest::Manifest},
+    test::{
+        CROSS_ARCH1, CROSS_ARCH2, CliTestContext, Config, Scenario, create_hash, this_host_tuple,
+    },
 };
 
 #[tokio::test]
@@ -281,6 +280,30 @@ async fn list_toolchains_with_bogus_file() {
         .await
         .with_stdout(snapbox::str![[r#"
 nightly-[HOST_TUPLE] (active, default)
+
+"#]])
+        .is_ok();
+}
+
+#[tokio::test]
+async fn list_toolchains_with_illegal_names() {
+    let cx = CliTestContext::new(Scenario::SimpleV2).await;
+    cx.config
+        .expect(["rustup", "update", "nightly"])
+        .await
+        .is_ok();
+
+    fs::create_dir(cx.config.rustupdir.join("toolchains/--illegal-name")).unwrap();
+
+    cx.config
+        .expect(["rustup", "toolchain", "list"])
+        .await
+        .with_stdout(snapbox::str![[r#"
+nightly-[HOST_TUPLE] (active, default)
+
+"#]])
+        .with_stderr(snapbox::str![[r#"
+warn: ignoring invalid toolchain: invalid toolchain name '--illegal-name'; valid toolchain names do not start with '-'
 
 "#]])
         .is_ok();
@@ -2617,6 +2640,58 @@ error: component 'rls' for target '[HOST_TUPLE]' is unavailable for download for
 "#]])
         .is_ok();
     cx.config.expect_component_executable("rls").await;
+}
+
+#[tokio::test]
+async fn update_allow_downgrade() {
+    let cx = CliTestContext::new(Scenario::MissingComponent).await;
+
+    cx.config.set_current_dist_date("2019-09-14");
+    cx.config
+        .expect(["rustup", "toolchain", "install", "nightly"])
+        .await
+        .is_ok();
+    cx.config
+        .expect(["rustc", "--version"])
+        .await
+        .with_stdout(snapbox::str![[r#"
+1.37.0 (hash-nightly-3)
+
+"#]])
+        .is_ok();
+
+    cx.config.set_current_dist_date("2019-09-13");
+    cx.config
+        .expect(["rustup", "toolchain", "install", "nightly"])
+        .await
+        .is_ok();
+    cx.config
+        .expect(["rustc", "--version"])
+        .await
+        .with_stdout(snapbox::str![[r#"
+1.37.0 (hash-nightly-3)
+
+"#]])
+        .is_ok();
+
+    cx.config
+        .expect([
+            "rustup",
+            "toolchain",
+            "install",
+            "nightly",
+            "--allow-downgrade",
+        ])
+        .await
+        .is_ok();
+    cx.config
+        .expect(["rustc", "--version"])
+        .await
+        .with_stdout(snapbox::str![[r#"
+1.37.0 (hash-nightly-2)
+
+"#]])
+        .is_ok();
 }
 
 #[tokio::test]

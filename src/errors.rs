@@ -1,10 +1,12 @@
 #![allow(clippy::large_enum_variant)]
 
-use std::ffi::OsString;
-use std::fmt::{Debug, Write as FmtWrite};
-use std::io;
-use std::io::Write;
-use std::path::PathBuf;
+use std::{
+    borrow::Cow,
+    ffi::OsString,
+    fmt::{Debug, Write as FmtWrite},
+    io::{self, Write},
+    path::PathBuf,
+};
 
 use platforms::Platform;
 use thiserror::Error as ThisError;
@@ -40,10 +42,6 @@ pub enum RustupError {
     IncompletePartialFile,
     #[error("component download failed for {0}")]
     ComponentDownloadFailed(String),
-    #[error("failure removing component '{name}', directory does not exist: '{}'", .path.display())]
-    ComponentMissingDir { name: String, path: PathBuf },
-    #[error("failure removing component '{name}', directory does not exist: '{}'", .path.display())]
-    ComponentMissingFile { name: String, path: PathBuf },
     #[error("could not create {name} directory: '{}'", .path.display())]
     CreatingDirectory { name: &'static str, path: PathBuf },
     #[error("invalid toolchain name: '{0}'")]
@@ -91,7 +89,7 @@ pub enum RustupError {
     RemovingDirectory { name: &'static str, path: PathBuf },
     #[error("could not remove '{name}' file: '{}'", .path.display())]
     RemovingFile { name: &'static str, path: PathBuf },
-    #[error("could not rename '{name}' file from '{src}' to '{dest}': {source}")]
+    #[error("could not rename '{name}' file from '{src}' to '{dest}'")]
     RenamingFile {
         name: &'static str,
         src: PathBuf,
@@ -119,11 +117,14 @@ pub enum RustupError {
     ToolchainNotInstallable(String),
     #[error(
         "toolchain '{name}' is not installed{}",
-        if let ToolchainName::Official(t) = name {
-            let t = if *is_active { "" } else { &format!(" {t}") };
-            format!("\nhelp: run `rustup toolchain install{t}` to install it")
-        } else {
-            String::new()
+        match name {
+            ToolchainName::Official(t) => {
+                let t = if *is_active { "" } else { &format!(" {t}") };
+                Cow::Owned(format!(
+                    "\nhelp: run `rustup toolchain install{t}` to install it",
+                ))
+            }
+            ToolchainName::Custom(t) => maybe_suggest_toolchain(t),
         },
     )]
     ToolchainNotInstalled {
@@ -188,6 +189,30 @@ fn suggest_message(suggestion: &Option<String>) -> String {
         format!("; did you mean '{suggestion}'?")
     } else {
         String::new()
+    }
+}
+
+fn maybe_suggest_toolchain(bad_name: &str) -> Cow<'static, str> {
+    if bad_name.bytes().all(|b| b".0123456789".contains(&b)) {
+        return Cow::Borrowed("\nhelp: official versioned channels take the form X.Y or X.Y.Z");
+    }
+
+    // Suggest only for very small differences
+    // High number can result in inaccurate suggestions for short queries e.g. `rls`
+    const MAX_DISTANCE: usize = 3;
+
+    let bad_name = &bad_name.to_lowercase();
+    let suggestion = ["stable", "beta", "nightly"]
+        .into_iter()
+        .filter_map(|s| {
+            let distance = strsim::damerau_levenshtein(bad_name, s);
+            (distance <= MAX_DISTANCE).then_some((distance, s))
+        })
+        .max();
+
+    match suggestion {
+        Some((_, s)) => Cow::Owned(format!("\nhelp: did you mean '{s}'?")),
+        None => Cow::Borrowed("\nhelp: maybe you have mistyped the toolchain name?"),
     }
 }
 

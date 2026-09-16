@@ -19,7 +19,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -297,8 +297,9 @@ impl Hash for Component {
 }
 
 mod component_target {
-    use super::{Result, TargetTuple};
     use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::TargetTuple;
 
     pub fn serialize<S: Serializer>(
         target: &Option<TargetTuple>,
@@ -312,7 +313,7 @@ mod component_target {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<Option<TargetTuple>, D::Error> {
+    ) -> anyhow::Result<Option<TargetTuple>, D::Error> {
         Ok(match Option::<String>::deserialize(deserializer)? {
             Some(s) if s != "*" => Some(TargetTuple::new(s)),
             _ => None,
@@ -321,7 +322,7 @@ mod component_target {
 }
 
 impl Manifest {
-    pub fn parse(data: &str) -> Result<Self> {
+    pub fn parse(data: &str) -> anyhow::Result<Self> {
         let mut manifest = toml::from_str::<Self>(data).context("error parsing manifest")?;
         for (from, to) in manifest.renames.iter() {
             manifest.reverse_renames.insert(to.to.clone(), from.clone());
@@ -331,11 +332,11 @@ impl Manifest {
         Ok(manifest)
     }
 
-    pub fn stringify(self) -> Result<String> {
+    pub fn stringify(self) -> anyhow::Result<String> {
         Ok(toml::to_string(&self)?)
     }
 
-    pub(super) fn binary(&self, component: &Component) -> Result<Option<&HashedBinary>> {
+    pub(super) fn binary(&self, component: &Component) -> anyhow::Result<Option<&HashedBinary>> {
         let package = self.get_package(component.short_name())?;
         let target_package = package.get_target(component.target.as_ref())?;
         // We prefer the first format in the list, since the parsing of the
@@ -343,17 +344,20 @@ impl Manifest {
         Ok(target_package.bins.first())
     }
 
-    pub fn get_package(&self, name: &str) -> Result<&Package> {
+    pub fn get_package(&self, name: &str) -> anyhow::Result<&Package> {
         self.packages
             .get(name)
             .ok_or_else(|| anyhow!(format!("package not found: '{name}'")))
     }
 
-    pub(crate) fn get_rust_version(&self) -> Result<&str> {
+    pub(crate) fn get_rust_version(&self) -> anyhow::Result<&str> {
         self.get_package("rust").map(|p| &*p.version)
     }
 
-    pub(crate) fn get_legacy_components(&self, target: &TargetTuple) -> Result<Vec<Component>> {
+    pub(crate) fn get_legacy_components(
+        &self,
+        target: &TargetTuple,
+    ) -> anyhow::Result<Vec<Component>> {
         // Build a profile from the components/extensions.
         let result = self
             .get_package("rust")?
@@ -370,7 +374,7 @@ impl Manifest {
         &self,
         profile: Profile,
         target: &TargetTuple,
-    ) -> Result<Vec<Component>> {
+    ) -> anyhow::Result<Vec<Component>> {
         // An older manifest with no profiles section.
         if self.profiles.is_empty() {
             return self.get_legacy_components(target);
@@ -398,7 +402,7 @@ impl Manifest {
         Ok(result)
     }
 
-    fn validate_targeted_package(&self, tpkg: &TargetedPackage) -> Result<()> {
+    fn validate_targeted_package(&self, tpkg: &TargetedPackage) -> anyhow::Result<()> {
         for c in tpkg.components.iter() {
             let cpkg = self.get_package(&c.pkg).with_context(|| {
                 RustupError::MissingPackageForComponent(self.short_name(c).to_owned())
@@ -410,7 +414,7 @@ impl Manifest {
         Ok(())
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self) -> anyhow::Result<()> {
         // Every component mentioned must have an actual package to download
         for pkg in self.packages.values() {
             match &pkg.targets {
@@ -454,7 +458,7 @@ impl Manifest {
         &self,
         desc: &ToolchainDesc,
         config: &Config,
-    ) -> Result<Vec<ComponentStatus>> {
+    ) -> anyhow::Result<Vec<ComponentStatus>> {
         // Return all optional components of the "rust" package for the
         // toolchain's target tuple.
         let mut res = Vec::new();
@@ -502,7 +506,7 @@ impl Manifest {
 }
 
 impl Package {
-    pub fn get_target(&self, target: Option<&TargetTuple>) -> Result<&TargetedPackage> {
+    pub fn get_target(&self, target: Option<&TargetTuple>) -> anyhow::Result<&TargetedPackage> {
         match &self.targets {
             PackageTargets::Wildcard(tpkg) => Ok(tpkg),
             PackageTargets::Targeted(tpkgs) => {
@@ -549,11 +553,15 @@ impl Component {
         }
     }
 
+    pub fn std(target: TargetTuple) -> Self {
+        Self::new("rust-std".to_string(), Some(target), false)
+    }
+
     pub(crate) fn try_new(
         name: &str,
         distributable: &DistributableToolchain<'_>,
         fallback_target: Option<&TargetTuple>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let manifest = distributable.get_manifest()?;
         for component_status in distributable.components()? {
             let component = component_status.component;
@@ -653,9 +661,10 @@ impl fmt::Display for ManifestVersion {
 
 #[cfg(test)]
 mod tests {
-    use crate::RustupError;
-    use crate::dist::TargetTuple;
-    use crate::dist::manifest::Manifest;
+    use crate::{
+        RustupError,
+        dist::{TargetTuple, manifest::Manifest},
+    };
 
     // Example manifest from https://public.etherpad-mozilla.org/p/Rust-infra-work-week
     static EXAMPLE: &str = include_str!("manifest/tests/channel-rust-nightly-example.toml");

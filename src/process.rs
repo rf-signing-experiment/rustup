@@ -1,10 +1,3 @@
-use std::ffi::OsString;
-use std::fmt::Debug;
-use std::io;
-use std::io::IsTerminal;
-use std::num::NonZero;
-use std::path::PathBuf;
-use std::str::FromStr;
 #[cfg(feature = "test")]
 use std::{
     collections::HashMap,
@@ -14,10 +7,19 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use std::{env, thread};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    fmt::Debug,
+    io::{self, IsTerminal},
+    num::NonZero,
+    path::PathBuf,
+    str::FromStr,
+    thread,
+};
 
 use anstream::ColorChoice;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, bail};
 use indicatif::ProgressDrawTarget;
 #[cfg(feature = "test")]
 use tracing::subscriber::DefaultGuard;
@@ -58,7 +60,7 @@ impl Process {
 
         arg0.as_ref()
             .and_then(|a| a.file_stem())
-            .and_then(std::ffi::OsStr::to_str)
+            .and_then(OsStr::to_str)
             .map(String::from)
     }
 
@@ -66,15 +68,15 @@ impl Process {
         home::env::home_dir_with_env(self)
     }
 
-    pub(crate) fn cargo_home(&self) -> Result<PathBuf> {
+    pub(crate) fn cargo_home(&self) -> anyhow::Result<PathBuf> {
         home::env::cargo_home_with_env(self).context("failed to determine cargo home")
     }
 
-    pub(crate) fn rustup_home(&self) -> Result<PathBuf> {
+    pub(crate) fn rustup_home(&self) -> anyhow::Result<PathBuf> {
         home::env::rustup_home_with_env(self).context("failed to determine rustup home dir")
     }
 
-    pub fn io_thread_count(&self) -> Result<IoThreadCount> {
+    pub fn io_thread_count(&self) -> anyhow::Result<IoThreadCount> {
         if let Ok(n) = self.var("RUSTUP_IO_THREADS") {
             let threads = usize::from_str(&n).context(
                 "invalid value in RUSTUP_IO_THREADS -- must be a natural number greater than zero",
@@ -95,14 +97,14 @@ impl Process {
         Ok(IoThreadCount::Default(count))
     }
 
-    pub(crate) fn unpack_ram(&self) -> Result<Option<usize>, env::VarError> {
+    pub(crate) fn unpack_ram(&self) -> anyhow::Result<Option<usize>, env::VarError> {
         Ok(match self.var_opt("RUSTUP_UNPACK_RAM")? {
             Some(budget) => usize::from_str(&budget).ok(),
             None => None,
         })
     }
 
-    pub fn var_opt(&self, key: &str) -> Result<Option<String>, env::VarError> {
+    pub fn var_opt(&self, key: &str) -> anyhow::Result<Option<String>, env::VarError> {
         match self.var(key) {
             Ok(val) => Ok(Some(val)),
             Err(env::VarError::NotPresent) => Ok(None),
@@ -126,6 +128,19 @@ impl Process {
         }
     }
 
+    /// Determines if the current process is running in a CI environment.
+    ///
+    /// # Note
+    ///
+    /// This function returns true iff the `CI` environment variable is set _and_ `RUSTUP_CI` is
+    /// not set.
+    ///
+    /// The `RUSTUP_CI` bit is required because it is set by rustup itself in test suites in
+    /// order to reproduce normal behavior even in a CI environment.
+    pub fn is_ci(&self) -> bool {
+        self.var("CI").is_ok() && self.var("RUSTUP_CI").is_err()
+    }
+
     #[cfg(not(target_os = "linux"))]
     pub fn permit_copy_rename(&self) -> bool {
         false
@@ -134,6 +149,11 @@ impl Process {
     #[cfg(target_os = "linux")]
     pub fn permit_copy_rename(&self) -> bool {
         match self {
+            // HACK: On Linux CI machines, rustup is sometimes installed in a Docker image and we
+            // may hit OverlayFS restrictions that prevent renaming. Thus, we allow falling back to
+            // copying to avoid this issue.
+            // See: <https://github.com/dtolnay/rust-toolchain/pull/177>
+            _ if self.is_ci() => true,
             Self::OsProcess(_) => env::var_os("RUSTUP_PERMIT_COPY_RENAME").is_some(),
             #[cfg(feature = "test")]
             Self::TestProcess(p) => p.vars.contains_key("RUSTUP_PERMIT_COPY_RENAME"),
@@ -421,8 +441,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::process::TestProcess;
-    use crate::test::Env;
+    use crate::{process::TestProcess, test::Env};
 
     #[test]
     fn term_color_choice() {

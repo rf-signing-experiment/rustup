@@ -1,10 +1,10 @@
 //! Yet more cli test cases. These are testing that the output
 //! is exactly as expected.
 
-use rustup::test::{
-    CROSS_ARCH1, CROSS_ARCH2, CliTestContext, MULTI_ARCH1, Scenario, this_host_tuple,
+use rustup::{
+    test::{CROSS_ARCH1, CROSS_ARCH2, CliTestContext, MULTI_ARCH1, Scenario, this_host_tuple},
+    utils::raw,
 };
-use rustup::utils::raw;
 
 #[tokio::test]
 async fn update_once() {
@@ -352,7 +352,7 @@ async fn override_again() {
         .is_ok()
         .with_stdout(snapbox::str![[""]])
         .with_stderr(snapbox::str![[r#"
-info: override toolchain for [CWD] set to nightly-[HOST_TUPLE]
+info: override toolchain for [CWD] set to nightly
 
 "#]]);
 }
@@ -526,7 +526,7 @@ async fn list_overrides() {
         .extend_redactions([("[CWD]", cwd_formatted)])
         .is_ok()
         .with_stdout(snapbox::str![[r#"
-[CWD]	nightly-[HOST_TUPLE]
+[CWD]	nightly             
 
 "#]])
         .with_stderr(snapbox::str![[""]]);
@@ -563,7 +563,7 @@ async fn list_overrides_with_nonexistent() {
         .extend_redactions([("[PATH]", path_formatted + " (not a directory)")])
         .is_ok()
         .with_stdout(snapbox::str![[r#"
-[PATH]	nightly-[HOST_TUPLE]
+[PATH]	nightly             
 
 
 "#]])
@@ -617,7 +617,7 @@ async fn default_custom_not_installed_toolchain() {
         .is_err()
         .with_stderr(snapbox::str![[r#"
 error: toolchain 'nightly-2016-03-1' is not installed
-
+...
 "#]]);
 }
 
@@ -823,7 +823,7 @@ async fn undefined_linked_toolchain() {
         .with_stdout(snapbox::str![[""]])
         .with_stderr(snapbox::str![[r#"
 error: toolchain 'bogus' is not installed
-
+...
 "#]]);
 }
 

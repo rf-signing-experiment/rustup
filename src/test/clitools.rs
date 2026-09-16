@@ -25,22 +25,19 @@ use snapbox::{IntoData, RedactedValue, Redactions, assert_data_eq};
 use tempfile::TempDir;
 use url::Url;
 
-use crate::cli::rustup_mode;
-use crate::process;
-use crate::test as rustup_test;
-use crate::test::const_dist_dir;
-use crate::test::tempdir_in_with_prefix;
-use crate::test::this_host_tuple;
-use crate::utils;
-
-#[cfg(windows)]
-use crate::{cli::self_update::RUSTUP_REGISTRY_TEST_ID, test::test_id};
-
 use super::{
     CHECKPOINT_ENV, CROSS_ARCH1, CROSS_ARCH2, MULTI_ARCH1, checkpoint_path,
     dist::{MockDistServer, MockManifestVersion, Release, RlsStatus, change_channel_date},
     mock::MockFile,
 };
+use crate::{
+    cli::rustup_mode,
+    process, test as rustup_test,
+    test::{const_dist_dir, tempdir_in_with_prefix, this_host_tuple},
+    utils,
+};
+#[cfg(windows)]
+use crate::{cli::self_update::RUSTUP_REGISTRY_TEST_ID, test::test_id};
 
 /// The configuration used by the tests in this module
 #[derive(Debug)]
@@ -187,19 +184,22 @@ impl Assert {
     }
 
     /// Asserts that the command exited with an ok status.
+    #[track_caller]
     pub fn is_ok(&self) -> &Self {
         self.has_code(0)
     }
 
     /// Asserts that the command exited with an error.
+    #[track_caller]
     pub fn is_err(&self) -> &Self {
-        assert_ne!(self.output.status, Some(0));
+        assert_ne!(self.output.status, Some(0), "unexpected command success");
         self
     }
 
     /// Asserts that the command exited with the specific code.
+    #[track_caller]
     pub fn has_code(&self, code: i32) -> &Self {
-        assert_eq!(self.output.status, Some(code));
+        assert_eq!(self.output.status, Some(code), "unexpected command failure");
         self
     }
 

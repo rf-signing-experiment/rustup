@@ -1,9 +1,7 @@
-use std::fs::create_dir_all;
-use std::path::Path;
+use std::{fs::create_dir_all, path::Path};
 
 use rustup::test::{CliTestContext, Scenario};
-use snapbox::Data;
-use snapbox::cmd::Command;
+use snapbox::{Data, cmd::Command};
 
 #[track_caller]
 fn test_help(name: &str, args: &[&str]) {
@@ -467,6 +465,14 @@ fn rustup_toolchain_cmd_uninstall_cmd_help_flag() {
     test_help(
         "rustup_toolchain_cmd_uninstall_cmd_help_flag",
         &["toolchain", "uninstall", "--help"],
+    );
+}
+
+#[test]
+fn rustup_toolchain_cmd_pin_cmd_help_flag() {
+    test_help(
+        "rustup_toolchain_cmd_pin_cmd_help_flag",
+        &["toolchain", "pin", "--help"],
     );
 }
 

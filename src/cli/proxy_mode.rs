@@ -1,17 +1,19 @@
 use std::{path::PathBuf, process::ExitStatus, str::FromStr};
 
-use anyhow::Result;
-
 use crate::{
     cli::{job, self_update},
     command::run_command_for_dir,
     config::{ActiveSource, Cfg},
     process::Process,
-    toolchain::ResolvableLocalToolchainName,
+    toolchain::{Override, ResolvableLocalToolchainName},
 };
 
 #[tracing::instrument(level = "trace", skip(process))]
-pub async fn main(arg0: &str, current_dir: PathBuf, process: &Process) -> Result<ExitStatus> {
+pub async fn main(
+    arg0: &str,
+    current_dir: PathBuf,
+    process: &Process,
+) -> anyhow::Result<ExitStatus> {
     self_update::cleanup_self_updater(process)?;
 
     let _setup = job::setup();
@@ -23,7 +25,7 @@ pub async fn main(arg0: &str, current_dir: PathBuf, process: &Process) -> Result
         .as_ref()
         .map(|arg| arg.to_string_lossy())
         .filter(|arg| arg.starts_with('+'))
-        .map(|name| ResolvableLocalToolchainName::from_str(&name[1..]))
+        .map(|name| Override::<ResolvableLocalToolchainName>::from_str(&name[1..]))
         .transpose()?;
 
     // Build command args now while we know whether or not to skip arg 1.
@@ -36,9 +38,10 @@ pub async fn main(arg0: &str, current_dir: PathBuf, process: &Process) -> Result
     let (toolchain, source) = cfg
         .local_toolchain(match toolchain {
             Some(name) => Some((
-                name.resolve(&cfg.default_host_tuple()?)?,
+                name.resolve(&cfg)?.resolve(&cfg.default_host_tuple()?)?,
                 ActiveSource::CommandLine,
             )),
+
             None => None,
         })
         .await?;

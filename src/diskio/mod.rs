@@ -51,20 +51,27 @@
 //    loss or errors in this model.
 // f) data gathering: record (name, bytes, start, duration)
 //    write to disk afterwards as a csv file?
-use std::io::{self, Write};
-use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
-use std::{fmt::Debug, fs::OpenOptions};
+use std::{
+    fmt::Debug,
+    fs::OpenOptions,
+    io::{self, Write},
+    ops::{Deref, DerefMut},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex, OnceLock,
+        mpsc::{self, Receiver},
+    },
+    time::{Duration, Instant},
+};
 
-use anyhow::Result;
+use anyhow::anyhow;
 use tracing::{error, trace, warn};
 
-use crate::diskio::immediate::{FileState, IncrementalFileWriter};
-use crate::process::IoThreadCount;
-use crate::utils::units::Size;
+use crate::{
+    diskio::immediate::{FileState, IncrementalFileWriter},
+    process::IoThreadCount,
+    utils::units::Size,
+};
 
 mod immediate;
 #[cfg(test)]
@@ -238,7 +245,7 @@ impl Item {
         full_path: PathBuf,
         mode: u32,
         state: IncrementalFileState,
-    ) -> Result<(Self, Box<dyn ChunkWriter>)> {
+    ) -> anyhow::Result<(Self, Box<dyn ChunkWriter>)> {
         let (chunk_submit, content_callback) = state.incremental_file_channel(&full_path, mode)?;
         let result = Self {
             full_path,
@@ -270,7 +277,7 @@ impl IncrementalFileState {
         &self,
         path: &Path,
         mode: u32,
-    ) -> Result<(Box<dyn ChunkWriter>, IncrementalFile)> {
+    ) -> anyhow::Result<(Box<dyn ChunkWriter>, IncrementalFile)> {
         match self {
             Self::Threaded => {
                 let (tx, rx) = mpsc::channel::<FileBuffer>();
@@ -491,8 +498,8 @@ pub(super) fn unpack_ram(io_chunk_size: usize, budget: Option<usize>) -> usize {
             effective as usize - RAM_ALLOWANCE_FOR_RUSTUP_AND_BUFFERS
         }
         Ok(_) => minimum_ram,
-        Err(error) => {
-            error!("can't determine memory limit: {error}");
+        Err(e) => {
+            error!("{:#}", anyhow!(e).context("can't determine memory limit"));
             minimum_ram
         }
     };

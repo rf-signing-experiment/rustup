@@ -2,20 +2,28 @@
 //! `Components` and `DirectoryPackage` are the two sides of the
 //! installation / uninstallation process.
 
-use std::borrow::Cow;
-use std::convert::Infallible;
-use std::fmt;
-use std::io::BufWriter;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    borrow::Cow,
+    convert::Infallible,
+    fmt,
+    io::BufWriter,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
-use anyhow::{Result, bail};
+use anyhow::bail;
 
-use crate::dist::component::package::{INSTALLER_VERSION, VERSION_FILE};
-use crate::dist::component::transaction::Transaction;
-use crate::dist::prefix::InstallPrefix;
-use crate::errors::RustupError;
-use crate::utils;
+use crate::{
+    dist::{
+        component::{
+            package::{INSTALLER_VERSION, VERSION_FILE},
+            transaction::Transaction,
+        },
+        prefix::InstallPrefix,
+    },
+    errors::RustupError,
+    utils,
+};
 
 const COMPONENTS_FILE: &str = "components";
 
@@ -25,17 +33,14 @@ pub struct Components {
 }
 
 impl Components {
-    pub fn open(prefix: InstallPrefix) -> Result<Self> {
+    pub fn open(prefix: InstallPrefix) -> anyhow::Result<Self> {
         let c = Self { prefix };
 
         // Validate that the metadata uses a format we know
         if let Some(v) = c.read_version()?
             && v != INSTALLER_VERSION
         {
-            bail!(
-                "unsupported metadata version in existing installation: {}",
-                v
-            );
+            bail!("unsupported metadata version in existing installation: {v}");
         }
 
         Ok(c)
@@ -46,7 +51,7 @@ impl Components {
     fn rel_component_manifest(&self, name: &str) -> PathBuf {
         self.prefix.rel_manifest_file(&format!("manifest-{name}"))
     }
-    fn read_version(&self) -> Result<Option<String>> {
+    fn read_version(&self) -> anyhow::Result<Option<String>> {
         let p = self.prefix.manifest_file(VERSION_FILE);
         if utils::is_file(&p) {
             Ok(Some(utils::read_file(VERSION_FILE, &p)?.trim().to_string()))
@@ -54,7 +59,7 @@ impl Components {
             Ok(None)
         }
     }
-    fn write_version(&self, tx: &mut Transaction) -> Result<()> {
+    fn write_version(&self, tx: &mut Transaction) -> anyhow::Result<()> {
         tx.modify_file(self.prefix.rel_manifest_file(VERSION_FILE))?;
         utils::write_file(
             VERSION_FILE,
@@ -64,7 +69,7 @@ impl Components {
 
         Ok(())
     }
-    pub fn list(&self) -> Result<Vec<Component>> {
+    pub fn list(&self) -> anyhow::Result<Vec<Component>> {
         let path = self.prefix.abs_path(self.rel_components_file());
         if !utils::is_file(&path) {
             return Ok(Vec::new());
@@ -86,7 +91,7 @@ impl Components {
             tx,
         }
     }
-    pub fn find(&self, name: &str) -> Result<Option<Component>> {
+    pub fn find(&self, name: &str) -> anyhow::Result<Option<Component>> {
         let result = self.list()?;
         Ok(result.into_iter().find(|c| c.name() == name))
     }
@@ -103,35 +108,35 @@ pub(crate) struct ComponentBuilder {
 }
 
 impl ComponentBuilder {
-    pub(crate) fn copy_file(&mut self, path: PathBuf, src: &Path) -> Result<()> {
+    pub(crate) fn copy_file(&mut self, path: PathBuf, src: &Path) -> anyhow::Result<()> {
         self.parts.push(ComponentPart {
             kind: ComponentPartKind::File,
             path: path.clone(),
         });
         self.tx.copy_file(&self.name, path, src)
     }
-    pub(crate) fn copy_dir(&mut self, path: PathBuf, src: &Path) -> Result<()> {
+    pub(crate) fn copy_dir(&mut self, path: PathBuf, src: &Path) -> anyhow::Result<()> {
         self.parts.push(ComponentPart {
             kind: ComponentPartKind::Dir,
             path: path.clone(),
         });
         self.tx.copy_dir(&self.name, path, src)
     }
-    pub(crate) fn move_file(&mut self, path: PathBuf, src: &Path) -> Result<()> {
+    pub(crate) fn move_file(&mut self, path: PathBuf, src: &Path) -> anyhow::Result<()> {
         self.parts.push(ComponentPart {
             kind: ComponentPartKind::File,
             path: path.clone(),
         });
         self.tx.move_file(&self.name, path, src)
     }
-    pub(crate) fn move_dir(&mut self, path: PathBuf, src: &Path) -> Result<()> {
+    pub(crate) fn move_dir(&mut self, path: PathBuf, src: &Path) -> anyhow::Result<()> {
         self.parts.push(ComponentPart {
             kind: ComponentPartKind::Dir,
             path: path.clone(),
         });
         self.tx.move_dir(&self.name, path, src)
     }
-    pub(crate) fn finish(mut self) -> Result<Transaction> {
+    pub(crate) fn finish(mut self) -> anyhow::Result<Transaction> {
         // Write component manifest
         let path = self.components.rel_component_manifest(&self.name);
         let abs_path = self.components.prefix.abs_path(&path);
@@ -244,7 +249,7 @@ impl Component {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
-    pub(crate) fn parts(&self) -> Result<Vec<ComponentPart>> {
+    pub(crate) fn parts(&self) -> anyhow::Result<Vec<ComponentPart>> {
         let mut result = Vec::new();
         for line in utils::read_file("component", &self.manifest_file())?.lines() {
             result.push(
@@ -254,7 +259,7 @@ impl Component {
         }
         Ok(result)
     }
-    pub fn uninstall(&self, mut tx: Transaction) -> Result<Transaction> {
+    pub fn uninstall(&self, mut tx: Transaction) -> anyhow::Result<Transaction> {
         // Update components file
         let path = self.components.rel_components_file();
         let abs_path = self.components.prefix.abs_path(&path);
@@ -267,9 +272,10 @@ impl Component {
         // and the version file.
 
         // Track visited directories
-        use std::collections::HashSet;
-        use std::collections::hash_set::IntoIter;
-        use std::fs::read_dir;
+        use std::{
+            collections::{HashSet, hash_set::IntoIter},
+            fs::read_dir,
+        };
 
         // dirs will contain the set of longest disjoint directory paths seen
         // ancestors help in filtering seen paths and constructing dirs

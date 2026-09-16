@@ -6,22 +6,20 @@
 )]
 //! Test support module; public to permit use from integration tests.
 
-use std::collections::HashMap;
-use std::env;
-use std::ffi::OsStr;
-use std::fmt;
-use std::fs;
-use std::fs::File;
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    collections::HashMap,
+    env,
+    ffi::OsStr,
+    fmt, fs,
+    fs::File,
+    io::{self, Read},
+    path::{Path, PathBuf},
+    process::Command,
+};
 
-#[cfg(test)]
-use anyhow::Result;
 use sha2::{Digest, Sha256};
 
-use crate::dist::TargetTuple;
-use crate::process::TestProcess;
+use crate::{dist::TargetTuple, process::TestProcess};
 
 #[cfg(all(windows, any(test, feature = "test")))]
 pub(crate) fn test_id() -> String {
@@ -250,9 +248,9 @@ impl fmt::Display for RustupHome {
 /// Create an isolated rustup home with no content, then call f with it, and
 /// delete it afterwards.
 #[cfg(test)]
-pub(super) fn with_rustup_home<F>(f: F) -> Result<()>
+pub(super) fn with_rustup_home<F>(f: F) -> anyhow::Result<()>
 where
-    F: FnOnce(&RustupHome) -> Result<()>,
+    F: FnOnce(&RustupHome) -> anyhow::Result<()>,
 {
     let test_dir = test_dir()?;
     let rustup_home = RustupHome::new_in(test_dir)?;
@@ -260,8 +258,7 @@ where
 }
 
 pub mod topical_doc_data {
-    use std::collections::HashSet;
-    use std::path::PathBuf;
+    use std::{collections::HashSet, path::PathBuf};
 
     // Paths are written as a string in the UNIX format to make it easy
     // to maintain.

@@ -1,15 +1,19 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 
 use super::{TufRepository, Verification};
-use crate::config::Cfg;
-use crate::dist::ToolchainDesc;
-use crate::dist::manifest::{Manifest, ManifestWithHash};
-use crate::errors::RustupError;
-use crate::utils;
+use crate::{
+    config::Cfg,
+    dist::{
+        ToolchainDesc,
+        manifest::{Manifest, ManifestWithHash},
+    },
+    errors::RustupError,
+    utils,
+};
 
 const UPDATE_HASH_LEN: usize = 20;
 
@@ -17,7 +21,7 @@ pub(crate) async fn dl_v2_manifest(
     update_hash: Option<&Path>,
     toolchain: &ToolchainDesc,
     cfg: &Cfg<'_>,
-) -> Result<Option<ManifestWithHash>> {
+) -> anyhow::Result<Option<ManifestWithHash>> {
     let location = match &cfg.tuf.dist_server {
         Some(server) => {
             trace!(server, "using RUSTUP_TUF_DIST_SERVER as TUF dist location");

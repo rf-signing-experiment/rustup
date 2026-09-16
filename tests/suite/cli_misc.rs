@@ -1,15 +1,14 @@
 //! Test cases of the rustup command that do not depend on the
 //! dist server, mostly derived from multirust/test-v2.sh
 
-use std::fs;
-use std::str;
-use std::{env::consts::EXE_SUFFIX, path::Path};
+use std::{env::consts::EXE_SUFFIX, fs, path::Path, str};
 
 use itertools::Itertools;
-use rustup::test::Assert;
-use rustup::test::{CliTestContext, MULTI_ARCH1, Scenario, this_host_tuple};
-use rustup::utils;
-use rustup::utils::raw::symlink_dir;
+use rustup::{
+    test::{Assert, CliTestContext, MULTI_ARCH1, Scenario, this_host_tuple},
+    utils,
+    utils::raw::symlink_dir,
+};
 
 #[tokio::test]
 async fn smoke_test() {
@@ -422,7 +421,7 @@ async fn rustup_doesnt_prepend_path_unnecessarily() {
     let cargo_home_bin = cx.config.cargodir.join("bin");
     assert_ok_with_paths(
         cx.config
-            .expect(["cargo", "--echo-path"])
+            .expect(["cargo", "--echo-env", "PATH"])
             .await
             .extend_redactions([("[CARGO_HOME_BIN]", &cargo_home_bin)]),
         snapbox::str![[r#"
@@ -433,7 +432,7 @@ async fn rustup_doesnt_prepend_path_unnecessarily() {
 
     assert_ok_with_paths(
         cx.config
-            .expect_with_env(["cargo", "--echo-path"], [("PATH", "")])
+            .expect_with_env(["cargo", "--echo-env", "PATH"], [("PATH", "")])
             .await
             .extend_redactions([("[CARGO_HOME_BIN]", &cargo_home_bin)]),
         snapbox::str![[r#"
@@ -446,7 +445,7 @@ async fn rustup_doesnt_prepend_path_unnecessarily() {
     assert_ok_with_paths(
         cx.config
             .expect_with_env(
-                ["cargo", "--echo-path"],
+                ["cargo", "--echo-env", "PATH"],
                 [("PATH", &*cx.config.exedir.display().to_string())],
             )
             .await
@@ -466,7 +465,7 @@ async fn rustup_doesnt_prepend_path_unnecessarily() {
     assert_ok_with_paths(
         cx.config
             .expect_with_env(
-                ["cargo", "--echo-path"],
+                ["cargo", "--echo-env", "PATH"],
                 [(
                     "PATH",
                     std::env::join_paths([&cx.config.exedir, &cargo_home_bin])
@@ -1245,10 +1244,28 @@ async fn nightly_backtrack_skips_missing() {
 #[tokio::test]
 async fn completion_rustup() {
     let cx = CliTestContext::new(Scenario::SimpleV2).await;
-    cx.config
+    let output = cx
+        .config
         .expect(["rustup", "completions", "bash", "rustup"])
-        .await
-        .is_ok();
+        .await;
+    output.is_ok();
+    assert!(output.output.stdout.contains("_rustup()"));
+    assert!(!output.output.stdout.contains("RUSTUP_COMPLETE"));
+}
+
+#[tokio::test]
+async fn dynamic_completion_rustup() {
+    let cx = CliTestContext::new(Scenario::SimpleV2).await;
+    let output = cx
+        .config
+        .cmd("rustup", std::iter::empty::<&str>())
+        .env("RUSTUP_COMPLETE", "bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("RUSTUP_COMPLETE=\"bash\""));
+    assert!(stdout.contains("_clap_complete_rustup()"));
 }
 
 #[tokio::test]
@@ -1536,7 +1553,7 @@ active because: overridden by +toolchain on the command line
         .await
         .with_stderr(snapbox::str![[r#"
 error:[..] toolchain 'foo' is not installed[..]
-
+...
 "#]])
         .is_err();
     cx.config
@@ -1664,7 +1681,7 @@ async fn rustup_updates_cargo_env_if_proxy() {
 
     // If CARGO isn't set then we should not set it.
     cx.config
-        .expect(["cargo", "--echo-cargo-env"])
+        .expect(["cargo", "--echo-env", "CARGO"])
         .await
         .with_stderr(snapbox::str![[r#"
 ...
@@ -1676,7 +1693,7 @@ CARGO environment variable not set[..]
     // If CARGO is set to a proxy then change it to the real CARGO path
     cx.config
         .expect_with_env(
-            ["cargo", "--echo-cargo-env"],
+            ["cargo", "--echo-env", "CARGO"],
             [("CARGO", &*proxy_path.display().to_string())],
         )
         .await

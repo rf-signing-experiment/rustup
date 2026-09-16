@@ -1,7 +1,9 @@
-use std::path::{Path, PathBuf};
-use std::{fmt, fs, ops};
+use std::{
+    fmt, fs, ops,
+    path::{Path, PathBuf},
+};
 
-pub(crate) use anyhow::{Context as _, Result};
+use anyhow::Context as _;
 use thiserror::Error as ThisError;
 use tracing::{debug, warn};
 
@@ -37,7 +39,7 @@ impl Drop for Dir {
                 Ok(()) => debug!(path = %self.path.display(), "deleted temp directory"),
                 Err(e) => {
                     warn!(
-                        "could not delete temp directory {} ({e})",
+                        "could not delete temp directory {}: {e}",
                         self.path.display()
                     )
                 }
@@ -65,7 +67,7 @@ impl Drop for File {
             match fs::remove_file(&self.path) {
                 Ok(()) => debug!(path = %self.path.display(), "deleted temp file"),
                 Err(e) => {
-                    warn!("could not delete temp file {} ({e})", self.path.display())
+                    warn!("could not delete temp file {}: {e}", self.path.display())
                 }
             }
         }
@@ -85,14 +87,14 @@ impl Context {
         }
     }
 
-    pub(crate) fn create_root(&self) -> Result<bool> {
+    pub(crate) fn create_root(&self) -> anyhow::Result<bool> {
         raw::ensure_dir_exists(&self.root_directory, |p| {
             debug!(path = %p.display(), "creating temp root");
         })
         .with_context(|| CreatingError::Root(PathBuf::from(&self.root_directory)))
     }
 
-    pub(crate) fn new_directory(&self) -> Result<Dir> {
+    pub(crate) fn new_directory(&self) -> anyhow::Result<Dir> {
         self.create_root()?;
 
         loop {
@@ -111,11 +113,11 @@ impl Context {
         }
     }
 
-    pub fn new_file(&self) -> Result<File> {
+    pub fn new_file(&self) -> anyhow::Result<File> {
         self.new_file_with_ext("", "")
     }
 
-    pub(crate) fn new_file_with_ext(&self, prefix: &str, ext: &str) -> Result<File> {
+    pub(crate) fn new_file_with_ext(&self, prefix: &str, ext: &str) -> anyhow::Result<File> {
         self.create_root()?;
 
         loop {

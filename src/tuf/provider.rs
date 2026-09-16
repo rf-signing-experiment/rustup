@@ -1,26 +1,25 @@
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
-use anyhow::{Context, Result, anyhow, bail};
-use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
-use futures_util::io::{AsyncRead, AsyncReadExt, Cursor};
-use tracing::{debug, trace, warn};
-use tuf::client::{Client, Config};
-use tuf::database::Database;
-use tuf::metadata::{
-    Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, RootMetadata, TargetPath,
+use anyhow::{Context, anyhow, bail};
+use futures_util::{
+    FutureExt,
+    future::BoxFuture,
+    io::{AsyncRead, AsyncReadExt, Cursor},
 };
-use tuf::pouf::Pouf2;
-use tuf::repository::{FileSystemRepository, RepositoryProvider};
+use tracing::{debug, trace, warn};
+use tuf::{
+    client::{Client, Config},
+    database::Database,
+    metadata::{
+        Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, RootMetadata, TargetPath,
+    },
+    pouf::Pouf2,
+    repository::{FileSystemRepository, RepositoryProvider},
+};
 use url::Url;
 
 use super::{TufConfig, TufMode};
-use crate::dist::temp;
-use crate::download::DownloadOptions;
-use crate::errors::RustupError;
-use crate::process::Process;
-use crate::utils;
+use crate::{dist::temp, download::DownloadOptions, errors::RustupError, process::Process, utils};
 
 const METADATA_PREFIX: &str = "metadata";
 const TARGETS_PREFIX: &str = "targets";
@@ -59,7 +58,7 @@ impl HttpRepository {
         Ok(url)
     }
 
-    async fn fetch(&self, url: Url) -> Result<Vec<u8>> {
+    async fn fetch(&self, url: Url) -> anyhow::Result<Vec<u8>> {
         let file = self.tmp_cx.new_file()?;
         debug!(%url, path = %file.display(), "fetching TUF file");
         self.options.start(&url, &file).download().await?;
@@ -135,7 +134,11 @@ enum Remote {
 }
 
 impl Remote {
-    fn from_location(location: &str, config: &TufConfig, process: &Process) -> Result<Self> {
+    fn from_location(
+        location: &str,
+        config: &TufConfig,
+        process: &Process,
+    ) -> anyhow::Result<Self> {
         if utils::is_directory(location) {
             debug!(
                 path = location,
@@ -206,7 +209,7 @@ impl TufRepository {
         config: &TufConfig,
         location: &str,
         process: &Process,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         debug!(
             location,
             home = %config.home.display(),
@@ -242,7 +245,7 @@ impl TufRepository {
         Ok(repo)
     }
 
-    pub(crate) async fn verify(&mut self) -> Result<Verification> {
+    pub(crate) async fn verify(&mut self) -> anyhow::Result<Verification> {
         if self.config.mode == TufMode::Off {
             debug!("TUF mode is off, skipping metadata update");
             return Ok(Verification::Skipped);
@@ -261,7 +264,10 @@ impl TufRepository {
         }
     }
 
-    pub(crate) async fn fetch_target(&mut self, target: &str) -> Result<(Vec<u8>, Verification)> {
+    pub(crate) async fn fetch_target(
+        &mut self,
+        target: &str,
+    ) -> anyhow::Result<(Vec<u8>, Verification)> {
         let path = TargetPath::new(target)?;
         debug!(target, mode = %self.config.mode, "fetching TUF target");
         if self.config.mode == TufMode::Off {
@@ -327,7 +333,7 @@ impl TufRepository {
         Err(last_err)
     }
 
-    fn tolerate(&self, err: anyhow::Error) -> Result<Verification> {
+    fn tolerate(&self, err: anyhow::Error) -> anyhow::Result<Verification> {
         let reason = match self.config.mode {
             TufMode::Off => Some("mode is off"),
             TufMode::Warn => Some("mode is warn"),
