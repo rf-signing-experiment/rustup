@@ -9,9 +9,9 @@ use tracing::{debug, trace, warn};
 use tuf::client::{Client, Config};
 use tuf::database::Database;
 use tuf::metadata::{
-    Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, RootMetadata, TargetPath,
+    Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetPath,
 };
-use tuf::pouf::Pouf2;
+use tuf::pouf::Pouf1;
 use tuf::repository::{FileSystemRepository, RepositoryProvider};
 use url::Url;
 
@@ -77,7 +77,7 @@ fn is_not_found(err: &anyhow::Error) -> bool {
     )
 }
 
-impl RepositoryProvider<Pouf2> for HttpRepository {
+impl RepositoryProvider<Pouf1> for HttpRepository {
     fn fetch_metadata<'a>(
         &'a self,
         meta_path: &MetadataPath,
@@ -86,7 +86,7 @@ impl RepositoryProvider<Pouf2> for HttpRepository {
         let meta_path = meta_path.clone();
         async move {
             trace!(%meta_path, %version, "fetching TUF metadata over http");
-            let url = self.url(METADATA_PREFIX, &meta_path.components::<Pouf2>(version))?;
+            let url = self.url(METADATA_PREFIX, &meta_path.components::<Pouf1>(version))?;
             match self.fetch(url).await {
                 Ok(bytes) => Ok(Box::new(Cursor::new(bytes)) as Reader<'a>),
                 Err(err) if is_not_found(&err) => {
@@ -111,8 +111,8 @@ impl RepositoryProvider<Pouf2> for HttpRepository {
     ) -> BoxFuture<'a, tuf::Result<Reader<'a>>> {
         let target_path = target_path.clone();
         async move {
-            trace!(%target_path, "fetching TUF target over http");
             let url = self.url(TARGETS_PREFIX, &target_path.components())?;
+            trace!(%target_path, %url, "fetching TUF target over http");
             match self.fetch(url).await {
                 Ok(bytes) => Ok(Box::new(Cursor::new(bytes)) as Reader<'a>),
                 Err(err) if is_not_found(&err) => {
@@ -130,7 +130,7 @@ impl RepositoryProvider<Pouf2> for HttpRepository {
 }
 
 enum Remote {
-    FileSystem(FileSystemRepository<Pouf2>),
+    FileSystem(FileSystemRepository<Pouf1>),
     Http(HttpRepository),
 }
 
@@ -167,7 +167,7 @@ impl Remote {
     }
 }
 
-impl RepositoryProvider<Pouf2> for Remote {
+impl RepositoryProvider<Pouf1> for Remote {
     fn fetch_metadata<'a>(
         &'a self,
         meta_path: &MetadataPath,
@@ -198,7 +198,7 @@ pub(crate) enum Verification {
 
 pub(crate) struct TufRepository {
     config: TufConfig,
-    client: Client<Pouf2, FileSystemRepository<Pouf2>, Remote>,
+    client: Client<Pouf1, FileSystemRepository<Pouf1>, Remote>,
 }
 
 impl TufRepository {
@@ -224,7 +224,7 @@ impl TufRepository {
                 debug!(path = %path.display(), "using trusted TUF root from RUSTUP_TUF_ROOT");
                 let bytes = utils::read_file("tuf root", path)?.into_bytes();
                 trace!(len = bytes.len(), "read trusted TUF root");
-                let root: RawSignedMetadata<Pouf2, RootMetadata> = RawSignedMetadata::new(bytes);
+                let root= RawSignedMetadata::new(bytes);
                 Client::with_trusted_root(Config::default(), &root, local, remote).await
             }
             None => {
@@ -367,7 +367,7 @@ impl TufRepository {
     }
 
     fn trace_database(&self, message: &str) {
-        let database: &Database<Pouf2> = self.client.database();
+        let database: &Database<Pouf1> = self.client.database();
         let root = database.trusted_root();
         trace!(
             root_version = root.version(),
