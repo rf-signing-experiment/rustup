@@ -1,26 +1,28 @@
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
-use futures_util::io::{AsyncRead, AsyncReadExt, Cursor};
-use tracing::{debug, trace, warn};
-use tuf::client::{Client, Config};
-use tuf::database::Database;
-use tuf::metadata::{
-    Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetPath,
+use futures_util::{
+    FutureExt,
+    future::BoxFuture,
+    io::{AsyncRead, AsyncReadExt, Cursor},
 };
-use tuf::pouf::Pouf1;
-use tuf::repository::{FileSystemRepository, RepositoryProvider};
+use tracing::{debug, trace, warn};
+use tuf::{
+    client::{Client, Config},
+    database::Database,
+    metadata::{Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetPath},
+    pouf::Pouf1,
+    repository::{FileSystemRepository, RepositoryProvider},
+};
 use url::Url;
-
-use super::{TufConfig, TufMode};
-use crate::dist::temp;
-use crate::download::DownloadOptions;
-use crate::errors::RustupError;
-use crate::process::Process;
-use crate::utils;
+use crate::{
+    tuf::{TufConfig, TufMode},
+    dist::temp,
+    download::DownloadOptions,
+    errors::RustupError,
+    process::Process,
+    utils
+};
 
 const METADATA_PREFIX: &str = "metadata";
 const TARGETS_PREFIX: &str = "targets";
