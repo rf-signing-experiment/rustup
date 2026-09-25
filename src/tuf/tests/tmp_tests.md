@@ -16,7 +16,7 @@ target/debug/rustup-init -y --no-modify-path --default-toolchain none
 curl -o /tmp/tuf-root.json https://storage.googleapis.com/rf-signing-rustup/metadata/1.root.json
 
 export RUSTUP_TUF_ENABLE=on
-export RUSTUP_TUF_IGNOREDATE=on 
+export RUSTUP_TUF_IGNOREDATE=2026-09-26T17:34:11+00:00 
 export RUSTUP_TUF_DIST_SERVER=https://storage.googleapis.com/rf-signing-rustup 
 export RUSTUP_TUF_ROOT=/tmp/tuf-root.json 
 
@@ -35,7 +35,7 @@ target/debug/rustup-init -y --no-modify-path --default-toolchain none
 /tmp/tuf-home/bin/rustup set auto-self-update disable
 
 export RUSTUP_TUF_ENABLE=on 
-export RUSTUP_TUF_IGNOREDATE=on
+export RUSTUP_TUF_IGNOREDATE=2026-09-26T17:34:11+00:00
 export RUSTUP_TUF_DIST_SERVER=./src/tuf/tests/repo/tuf
 export RUSTUP_TUF_ROOT=./src/tuf/tests/repo/tuf/metadata/1.root.json
 

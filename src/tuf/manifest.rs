@@ -1,9 +1,7 @@
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+use chrono::NaiveDate;
 use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 
@@ -17,32 +15,6 @@ use crate::{
 };
 
 const UPDATE_HASH_LEN: usize = 20;
-
-#[derive(Debug, PartialEq)]
-pub struct SimpleDate {
-    year: String,
-    month: String,
-    day: String,
-}
-
-impl FromStr for SimpleDate {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        let mut parts = s.split('-');
-        let (Some(year), Some(month), Some(day), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            bail!("invalid date '{s}', expected yyyy-mm-dd");
-        };
-        Ok(Self {
-            year: year.to_owned(),
-            month: month.to_owned(),
-            day: day.to_owned(),
-        })
-    }
-}
-
 
 // Expand ToolChainDesc here so we don't sprinkle code further into the top level codebase
 // We implement a manifests v3 which directs to the new pathing used for channels
@@ -71,8 +43,9 @@ impl ToolchainDesc {
                 }
             },
             (Some(date), false) => {
-                let date_parts = SimpleDate::from_str(date)?;
-                Ok(format!("{}/channels/nightly/{}/{}-{}/{}.toml", dist_root, &date_parts.year, &date_parts.month, &date_parts.day, self.channel))
+                let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                    .with_context(|| format!("invalid date '{date}', expected yyyy-mm-dd"))?;
+                Ok(format!("{}/channels/nightly/{}/{}.toml", dist_root, date.format("%Y/%m-%d"), self.channel))
             },
             (None, true) => Ok(format!("{}/channels/staging/{}.toml", dist_root, self.channel)),
             (Some(_), true) => panic!("not a real-world case"),
