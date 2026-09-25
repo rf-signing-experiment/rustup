@@ -23,6 +23,51 @@ const UPDATE_HASH_LEN: usize = 20;
 // We implement a manifests v3 which directs to the new pathing used for channels
 impl ToolchainDesc {
     // Added impl for TUF specific url-mapping changes for the new channel dist paths
+    /*
+        This implementation currently gives us a layout that looks like this:
+        
+        ├── channels/
+        │   ├── beta/
+        │   │   ├── 1.75-beta-2023-11-13.toml
+        │   │   ├── 1.75-beta-2023-11-19.toml
+        │   │   ├── 1.75-beta-2023-11-21.toml
+        │   │   ├── 1.75-beta-2023-11-29.toml
+        │   │   ├── 1.75-beta-2023-12-02.toml
+        │   │   └── ... (1195 more)
+        │   ├── current/
+        │   │   ├── beta.toml
+        │   │   ├── nightly.toml
+        │   │   └── stable.toml
+        │   ├── nightly/
+        │   │   ├── 2018/
+        │   │   │   ├── 01-01/
+        │   │   │   │   └── nightly.toml
+        │   │   │   ├── 01-02/
+        │   │   │   │   ├── beta.toml
+        │   │   │   │   └── nightly.toml
+        │   │   │   ├── 01-03/
+        │   │   │   │   └── nightly.toml
+        │   │   │   ├── 01-04/
+        │   │   │   │   ├── nightly.toml
+        │   │   │   │   └── stable.toml
+        │   │   │   ├── 01-05/
+        │   │   │   │   └── nightly.toml
+        │   │   │   └── ... (314 more)
+        │   └── stable/
+        │       ├── 1.10.0.toml
+        │       ├── 1.11.0.toml
+        │       ├── 1.12.0.toml
+        │       ├── 1.12.1.toml
+        │       ├── 1.13.0.toml
+        │       └── ... (178 more)
+
+        TODO: we have an open question here on how/where we want to duplicate manifests.
+            to support dated channel requests for the existing format, we either need to:
+            1. duplicate stable/beta files as version.toml and date.toml 
+            2. We use the nightly role path for dated lookups; but this exposes stable role
+                to nightly role and breaks the security boundary of roles for the folders for
+                channels matching.
+    */
     pub(crate) fn manifest_v3_url(&self, dist_root: &str, process: &Process) -> Result<String> {
         let do_manifest_staging = process.var("RUSTUP_STAGED_MANIFEST").is_ok();
         trace!("{}, {}", &self.channel, &self.target);
