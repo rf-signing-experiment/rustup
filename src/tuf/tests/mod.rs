@@ -111,12 +111,19 @@ fn verify_manifest_paths() {
         let desc = ToolchainDesc::from_str(&format!("{toolchain}-{host}")).unwrap();
         let url = desc.manifest_v3_url("", &tp.process).unwrap();
         let path = src.join(url.trim_start_matches('/'));
-        assert!(path.is_file(), "{toolchain}: {} does not exist", path.display());
+        assert!(
+            path.is_file(),
+            "{toolchain}: {} does not exist",
+            path.display()
+        );
         generated.insert(path);
     }
 
     let mut existing = Vec::new();
     manifests(&src.join("channels"), &mut existing);
     let existing = existing.into_iter().collect::<BTreeSet<_>>();
-    assert_eq!(generated, existing, "every manifest in tests/repo/src must be generated");
+    assert_eq!(
+        generated, existing,
+        "every manifest in tests/repo/src must be generated"
+    );
 }

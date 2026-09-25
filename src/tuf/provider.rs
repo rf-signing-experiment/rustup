@@ -1,5 +1,13 @@
 use std::{fs, path::PathBuf};
 
+use crate::{
+    dist::temp,
+    download::DownloadOptions,
+    errors::RustupError,
+    process::Process,
+    tuf::{TufConfig, TufMode},
+    utils,
+};
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::{
     FutureExt,
@@ -15,14 +23,6 @@ use tuf::{
     repository::{FileSystemRepository, RepositoryProvider},
 };
 use url::Url;
-use crate::{
-    tuf::{TufConfig, TufMode},
-    dist::temp,
-    download::DownloadOptions,
-    errors::RustupError,
-    process::Process,
-    utils
-};
 
 const METADATA_PREFIX: &str = "metadata";
 const TARGETS_PREFIX: &str = "targets";
@@ -226,7 +226,7 @@ impl TufRepository {
                 debug!(path = %path.display(), "using trusted TUF root from RUSTUP_TUF_ROOT");
                 let bytes = utils::read_file("tuf root", path)?.into_bytes();
                 trace!(len = bytes.len(), "read trusted TUF root");
-                let root= RawSignedMetadata::new(bytes);
+                let root = RawSignedMetadata::new(bytes);
                 Client::with_trusted_root(Config::default(), &root, local, remote).await
             }
             None => {

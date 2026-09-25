@@ -4,13 +4,13 @@
 //! rustup consumes it yet. Every setting comes from an environment variable
 //! read through [`Process`], so the CLI test harness can drive it.
 
+use crate::process::Process;
+use chrono::{DateTime, NaiveDate, Utc};
 use std::{
     fmt,
     path::{Path, PathBuf},
 };
-use chrono::{DateTime, NaiveDate, Utc};
 use tracing::trace;
-use crate::process::Process;
 
 mod manifest;
 mod provider;

@@ -6,12 +6,15 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    tuf::{TufRepository, Verification},
-    process::Process,
     config::Cfg,
-    dist::{Channel, ToolchainDesc, manifest::{Manifest, ManifestWithHash}},
+    dist::{
+        Channel, ToolchainDesc,
+        manifest::{Manifest, ManifestWithHash},
+    },
     errors::RustupError,
-    utils
+    process::Process,
+    tuf::{TufRepository, Verification},
+    utils,
 };
 
 const UPDATE_HASH_LEN: usize = 20;
@@ -22,36 +25,44 @@ impl ToolchainDesc {
     // Added impl for TUF specific url-mapping changes for the new channel dist paths
     pub(crate) fn manifest_v3_url(&self, dist_root: &str, process: &Process) -> Result<String> {
         let do_manifest_staging = process.var("RUSTUP_STAGED_MANIFEST").is_ok();
-        trace!(
-            "{}, {}",
-            &self.channel,
-            &self.target
-        );
+        trace!("{}, {}", &self.channel, &self.target);
 
         match (self.date.as_ref(), do_manifest_staging) {
             (None, false) => {
                 match &self.channel {
-                    Channel::Nightly | Channel::Beta | Channel::Stable => Ok(format!("{}/channels/current/{}.toml", dist_root, self.channel)),
+                    Channel::Nightly | Channel::Beta | Channel::Stable => Ok(format!(
+                        "{}/channels/current/{}.toml",
+                        dist_root, self.channel
+                    )),
                     Channel::Version(version) => {
                         // TODO: Is this good enough?
                         if !version.pre.is_empty() {
                             Ok(format!("{}/channels/beta/{}.toml", dist_root, self.channel))
                         } else {
-                            Ok(format!("{}/channels/stable/{}.toml", dist_root, self.channel))
+                            Ok(format!(
+                                "{}/channels/stable/{}.toml",
+                                dist_root, self.channel
+                            ))
                         }
-                    },
+                    }
                 }
-            },
+            }
             (Some(date), false) => {
                 let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
                     .with_context(|| format!("invalid date '{date}', expected yyyy-mm-dd"))?;
-                Ok(format!("{}/channels/nightly/{}/{}.toml", dist_root, date.format("%Y/%m-%d"), self.channel))
-            },
-            (None, true) => Ok(format!("{}/channels/staging/{}.toml", dist_root, self.channel)),
+                Ok(format!(
+                    "{}/channels/nightly/{}/{}.toml",
+                    dist_root,
+                    date.format("%Y/%m-%d"),
+                    self.channel
+                ))
+            }
+            (None, true) => Ok(format!(
+                "{}/channels/staging/{}.toml",
+                dist_root, self.channel
+            )),
             (Some(_), true) => panic!("not a real-world case"),
         }
-
-        
     }
 }
 
