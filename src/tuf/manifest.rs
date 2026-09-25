@@ -1,17 +1,86 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use tracing::{debug, trace, warn};
 
-use super::{TufRepository, Verification};
-use crate::config::Cfg;
-use crate::dist::ToolchainDesc;
-use crate::dist::manifest::{Manifest, ManifestWithHash};
-use crate::errors::RustupError;
-use crate::utils;
+use crate::{
+    tuf::{TufRepository, Verification},
+    process::Process,
+    config::Cfg,
+    dist::{Channel, ToolchainDesc, manifest::{Manifest, ManifestWithHash}},
+    errors::RustupError,
+    utils
+};
 
 const UPDATE_HASH_LEN: usize = 20;
+
+#[derive(Debug, PartialEq)]
+pub struct SimpleDate {
+    year: String,
+    month: String,
+    day: String,
+}
+
+impl FromStr for SimpleDate {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let mut parts = s.split('-');
+        let (Some(year), Some(month), Some(day), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            bail!("invalid date '{s}', expected yyyy-mm-dd");
+        };
+        Ok(Self {
+            year: year.to_owned(),
+            month: month.to_owned(),
+            day: day.to_owned(),
+        })
+    }
+}
+
+
+// Expand ToolChainDesc here so we don't sprinkle code further into the top level codebase
+// We implement a manifests v3 which directs to the new pathing used for channels
+impl ToolchainDesc {
+    // Added impl for TUF specific url-mapping changes for the new channel dist paths
+    pub(crate) fn manifest_v3_url(&self, dist_root: &str, process: &Process) -> Result<String> {
+        let do_manifest_staging = process.var("RUSTUP_STAGED_MANIFEST").is_ok();
+        trace!(
+            "{}, {}",
+            &self.channel,
+            &self.target
+        );
+
+        match (self.date.as_ref(), do_manifest_staging) {
+            (None, false) => {
+                match &self.channel {
+                    Channel::Nightly | Channel::Beta | Channel::Stable => Ok(format!("{}/channels/current/{}.toml", dist_root, self.channel)),
+                    Channel::Version(version) => {
+                        // TODO: Is this good enough?
+                        if !version.pre.is_empty() {
+                            Ok(format!("{}/channels/beta/{}.toml", dist_root, self.channel))
+                        } else {
+                            Ok(format!("{}/channels/stable/{}.toml", dist_root, self.channel))
+                        }
+                    },
+                }
+            },
+            (Some(date), false) => {
+                let date_parts = SimpleDate::from_str(date)?;
+                Ok(format!("{}/channels/nightly/{}/{}-{}/{}.toml", dist_root, &date_parts.year, &date_parts.month, &date_parts.day, self.channel))
+            },
+            (None, true) => Ok(format!("{}/channels/staging/{}.toml", dist_root, self.channel)),
+            (Some(_), true) => panic!("not a real-world case"),
+        }
+
+        
+    }
+}
 
 pub(crate) async fn dl_v2_manifest(
     update_hash: Option<&Path>,
@@ -31,7 +100,7 @@ pub(crate) async fn dl_v2_manifest(
             cfg.dist_root_url.clone()
         }
     };
-    let target = toolchain.manifest_v2_url("", cfg.process);
+    let target = toolchain.manifest_v3_url("", cfg.process)?;
     let target = target.trim_start_matches('/');
 
     debug!(
