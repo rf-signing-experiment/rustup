@@ -1251,7 +1251,8 @@ async fn prepare_update(dl_cfg: &DownloadCfg<'_>) -> anyhow::Result<Option<Prepa
         return Ok(None);
     }
 
-    // Get download URL
+    // The same versioned path with or without TUF; the repository publishes
+    // the binaries under `rustup/archive/` too.
     let url = format!("{update_root}/archive/{available_version}/{tuple}/rustup-init{EXE_SUFFIX}");
 
     // Get download path
@@ -1262,7 +1263,7 @@ async fn prepare_update(dl_cfg: &DownloadCfg<'_>) -> anyhow::Result<Option<Prepa
     // Download new version
     info!("downloading self-update (new version: {available_version})");
     DownloadOptions::try_from(dl_cfg.process)?
-        .start(&download_url, setup_path)
+        .start(&download_url, setup_path, Some(dl_cfg.tuf))
         .download()
         .await?;
 
@@ -1287,7 +1288,7 @@ async fn get_available_rustup_version(dl_cfg: &DownloadCfg<'_>) -> anyhow::Resul
     let release_file_url = utils::parse_url(&release_file_url)?;
     let release_file = tempdir.path().join("release-stable.toml");
     DownloadOptions::try_from(dl_cfg.process)?
-        .start(&release_file_url, &release_file)
+        .start(&release_file_url, &release_file, Some(dl_cfg.tuf))
         .download()
         .await?;
 
