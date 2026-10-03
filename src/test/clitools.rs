@@ -931,24 +931,6 @@ impl SelfUpdateTestContext {
         let root_url = create_local_update_server(self_dist, &cx.config.exedir, version);
         cx.config.rustup_update_root = Some(root_url);
 
-        let trip = this_host_tuple();
-        let dist_dir = self_dist.join(format!("archive/{version}/{trip}"));
-        let dist_exe = dist_dir.join(format!("rustup-init{EXE_SUFFIX}"));
-        let dist_tmp = dist_dir.join("rustup-init-tmp");
-
-        // Modify the exe so it hashes different
-        // 1) move out of the way the file
-        fs::rename(&dist_exe, &dist_tmp).unwrap();
-        // 2) copy it
-        fs::copy(dist_tmp, &dist_exe).unwrap();
-        // modify it
-        let mut dest_file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(dist_exe)
-            .unwrap();
-        writeln!(dest_file).unwrap();
-
         Self {
             config: cx.config,
             _test_dir: cx._test_dir,
@@ -1077,24 +1059,6 @@ impl CliTestContext {
         let self_dist = self_dist_tmp.path();
 
         let root_url = create_local_update_server(self_dist, &self.config.exedir, version);
-        let trip = this_host_tuple();
-        let dist_dir = self_dist.join(format!("archive/{version}/{trip}"));
-        let dist_exe = dist_dir.join(format!("rustup-init{EXE_SUFFIX}"));
-        let dist_tmp = dist_dir.join("rustup-init-tmp");
-
-        // Modify the exe so it hashes different
-        // 1) move out of the way the file
-        fs::rename(&dist_exe, &dist_tmp).unwrap();
-        // 2) copy it
-        fs::copy(dist_tmp, &dist_exe).unwrap();
-        // modify it
-        let mut dest_file = fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(dist_exe)
-            .unwrap();
-        writeln!(dest_file).unwrap();
-
         self.config.rustup_update_root = Some(root_url);
         UpdateServerGuard {
             _self_dist: self_dist_tmp,
@@ -1217,20 +1181,33 @@ impl Drop for DistDirGuard<'_> {
     }
 }
 
+/// Lays out a mock self-update server in `self_dist`: `release-stable.toml`
+/// announcing `version`, and a `rustup-init` binary that hashes differently from
+/// the one under test, published both under `archive/<version>/<tuple>/` (where
+/// `RUSTUP_VERSION` looks) and under `dist/<tuple>/` (where the version from the
+/// release file is downloaded from).
 fn create_local_update_server(self_dist: &Path, exedir: &Path, version: &str) -> String {
     let trip = this_host_tuple();
-    let dist_dir = self_dist.join(format!("archive/{version}/{trip}"));
-    let dist_exe = dist_dir.join(format!("rustup-init{EXE_SUFFIX}"));
-    let rustup_bin = exedir.join(format!("rustup-init{EXE_SUFFIX}"));
+    let exe = format!("rustup-init{EXE_SUFFIX}");
+    let archive_exe = self_dist.join(format!("archive/{version}/{trip}/{exe}"));
+    let latest_exe = self_dist.join(format!("dist/{trip}/{exe}"));
+    let rustup_bin = exedir.join(&exe);
 
-    fs::create_dir_all(dist_dir).unwrap();
     output_release_file(self_dist, "1", version);
+    fs::create_dir_all(archive_exe.parent().unwrap()).unwrap();
+    fs::create_dir_all(latest_exe.parent().unwrap()).unwrap();
     // TODO: should this hardlink since the modify-codepath presumes it has to
     // link break?
-    fs::copy(rustup_bin, dist_exe).unwrap();
+    fs::copy(rustup_bin, &archive_exe).unwrap();
+    // Modify the exe so it hashes different
+    let mut dest_file = fs::OpenOptions::new()
+        .append(true)
+        .open(&archive_exe)
+        .unwrap();
+    writeln!(dest_file).unwrap();
+    fs::copy(&archive_exe, latest_exe).unwrap();
 
-    let root_url = format!("file://{}", self_dist.display());
-    root_url
+    format!("file://{}", self_dist.display())
 }
 
 pub fn output_release_file(dist_dir: &Path, schema: &str, version: &str) {

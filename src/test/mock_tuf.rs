@@ -175,25 +175,35 @@ impl MockTufServer {
             for version in fs::read_dir(self_dist.join("archive")).unwrap() {
                 let version = version.unwrap().path();
                 let release = version.file_name().unwrap().to_string_lossy().into_owned();
-                for triple in fs::read_dir(&version).unwrap() {
-                    let triple = triple.unwrap().path();
-                    let name = triple.file_name().unwrap().to_string_lossy().into_owned();
-                    for bin in fs::read_dir(&triple).unwrap() {
-                        let bin = bin.unwrap().path();
-                        let file = bin.file_name().unwrap().to_string_lossy().into_owned();
-                        if !file.starts_with("rustup-init") || file.contains("tmp") {
-                            continue;
-                        }
-                        targets.push((
-                            format!("rustup/archive/{release}/{name}/{file}"),
-                            fs::read(&bin).unwrap(),
-                        ));
-                    }
-                }
+                targets.extend(rustup_init_targets(
+                    &version,
+                    &format!("rustup/archive/{release}"),
+                ));
             }
+            // `dist/<target>/rustup-init`, the latest release that the version
+            // in `release-stable.toml` refers to, under `rustup/dist/`.
+            targets.extend(rustup_init_targets(&self_dist.join("dist"), "rustup/dist"));
         }
         targets
     }
+}
+
+/// Every `rustup-init` binary under `dir/<target>/`, named `<prefix>/<target>/<file>`.
+fn rustup_init_targets(dir: &Path, prefix: &str) -> Vec<(String, Vec<u8>)> {
+    let mut targets = Vec::new();
+    for triple in fs::read_dir(dir).unwrap() {
+        let triple = triple.unwrap().path();
+        let name = triple.file_name().unwrap().to_string_lossy().into_owned();
+        for bin in fs::read_dir(&triple).unwrap() {
+            let bin = bin.unwrap().path();
+            let file = bin.file_name().unwrap().to_string_lossy().into_owned();
+            if !file.starts_with("rustup-init") || file.contains("tmp") {
+                continue;
+            }
+            targets.push((format!("{prefix}/{name}/{file}"), fs::read(&bin).unwrap()));
+        }
+    }
+    targets
 }
 
 /// The channel of a v2 manifest file name, `channel-rust-<channel>.toml`.

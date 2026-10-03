@@ -608,7 +608,7 @@ async fn update_download_404() {
         .is_ok();
 
     let trip = this_host_tuple();
-    let dist_dir = cx.path().join(format!("archive/{TEST_VERSION}/{trip}"));
+    let dist_dir = cx.path().join(format!("dist/{trip}"));
     let dist_exe = dist_dir.join(format!("rustup-init{EXE_SUFFIX}"));
 
     fs::remove_file(dist_exe).unwrap();

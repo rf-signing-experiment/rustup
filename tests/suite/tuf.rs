@@ -183,7 +183,7 @@ async fn self_update_tampered_binary_fails() {
         .await
         .is_ok();
     tuf.tamper(&format!(
-        "rustup/archive/{TEST_VERSION}/{}/rustup-init{}",
+        "rustup/dist/{}/rustup-init{}",
         rustup::test::this_host_tuple(),
         std::env::consts::EXE_SUFFIX
     ));
