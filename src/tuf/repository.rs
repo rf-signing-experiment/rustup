@@ -269,14 +269,14 @@ impl TufRepository {
         let database: &Database<Pouf1> = self.client.database();
         let root = database.trusted_root();
         trace!(
-            root_version = root.version(),
+            root_version = %root.version(),
             root_expires = %root.expires(),
             consistent_snapshot = root.consistent_snapshot(),
-            timestamp_version = database.trusted_timestamp().map(|m| m.version()),
+            timestamp_version = database.trusted_timestamp().map(|m| u32::from(m.version())),
             timestamp_expires = database.trusted_timestamp().map(|m| m.expires().to_string()),
-            snapshot_version = database.trusted_snapshot().map(|m| m.version()),
+            snapshot_version = database.trusted_snapshot().map(|m| u32::from(m.version())),
             snapshot_expires = database.trusted_snapshot().map(|m| m.expires().to_string()),
-            targets_version = database.trusted_targets().map(|m| m.version()),
+            targets_version = database.trusted_targets().map(|m| u32::from(m.version())),
             targets_expires = database.trusted_targets().map(|m| m.expires().to_string()),
             targets_count = database.trusted_targets().map(|m| m.targets().len()),
             delegations = database.trusted_delegations().len(),
@@ -333,7 +333,7 @@ impl RepositoryProvider<Pouf1> for Remote {
     fn fetch_metadata<'a>(
         &'a self,
         meta_path: &MetadataPath,
-        version: MetadataVersion,
+        version: Option<MetadataVersion>,
     ) -> BoxFuture<'a, tuf::Result<Box<dyn AsyncRead + Send + Unpin + 'a>>> {
         match self {
             Self::FileSystem(repo) => repo.fetch_metadata(meta_path, version),
@@ -399,23 +399,23 @@ impl RepositoryProvider<Pouf1> for HttpRepository {
     fn fetch_metadata<'a>(
         &'a self,
         meta_path: &MetadataPath,
-        version: MetadataVersion,
+        version: Option<MetadataVersion>,
     ) -> BoxFuture<'a, tuf::Result<Box<dyn AsyncRead + Send + Unpin + 'a>>> {
         let meta_path = meta_path.clone();
         async move {
-            trace!(%meta_path, %version, "fetching TUF metadata over http");
+            trace!(%meta_path, ?version, "fetching TUF metadata over http");
             let url = self.url(METADATA_PREFIX, &meta_path.components::<Pouf1>(version))?;
             match self.fetch(url).await {
                 Ok(bytes) => Ok(Box::new(Cursor::new(bytes)) as Box<dyn AsyncRead + Send + Unpin>),
                 Err(err) if is_not_found(&err) => {
-                    trace!(%meta_path, %version, "TUF metadata not found");
+                    trace!(%meta_path, ?version, "TUF metadata not found");
                     Err(tuf::Error::MetadataNotFound {
                         path: meta_path,
                         version,
                     })
                 }
                 Err(err) => {
-                    debug!(%meta_path, %version, error = format!("{err:#}"), "TUF metadata fetch failed");
+                    debug!(%meta_path, ?version, error = format!("{err:#}"), "TUF metadata fetch failed");
                     Err(tuf::Error::Opaque(format!("{err:#}")))
                 }
             }

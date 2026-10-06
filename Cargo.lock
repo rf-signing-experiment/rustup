@@ -524,7 +524,6 @@ dependencies = [
  "hybrid-array",
  "num-traits",
  "rand_core 0.10.1",
- "serdect",
  "subtle",
  "zeroize",
 ]
@@ -537,16 +536,6 @@ checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "getrandom 0.4.3",
  "hybrid-array",
- "rand_core 0.10.1",
-]
-
-[[package]]
-name = "crypto-primes"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3633a51a39c69ebbaa4feaa694bd83d241e4093901c84a0963b19d9bb3f0cf8f"
-dependencies = [
- "crypto-bigint",
  "rand_core 0.10.1",
 ]
 
@@ -680,16 +669,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
-]
-
-[[package]]
-name = "dsse"
-version = "0.1.0"
-source = "git+https://github.com/rf-signing-experiment/rust-tuf?rev=08d65e820bc12a15cda9ebbd4d07964ee620b579#08d65e820bc12a15cda9ebbd4d07964ee620b579"
-dependencies = [
- "data-encoding",
- "serde",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1916,16 +1895,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pkcs1"
-version = "0.8.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "986d2e952779af96ea048f160fd9194e1751b4faea78bcf3ceb456efe008088e"
-dependencies = [
- "der",
- "spki",
-]
-
-[[package]]
 name = "pkcs8"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2304,25 +2273,6 @@ checksum = "e3b121670da627e1c0110e7972c9db150dd7f8704dc073cce32c3db9cb7861e0"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "rsa"
-version = "0.10.0-rc.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30b2aa4ba0d89f73d1e332df05be0eeab8840351c36ca5654341dfdb57bb3caf"
-dependencies = [
- "const-oid",
- "crypto-bigint",
- "crypto-primes",
- "digest",
- "pkcs1",
- "pkcs8",
- "rand_core 0.10.1",
- "sha2",
- "signature",
- "spki",
- "zeroize",
 ]
 
 [[package]]
@@ -3282,11 +3232,10 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 [[package]]
 name = "tuf"
 version = "0.3.0-beta15"
-source = "git+https://github.com/rf-signing-experiment/rust-tuf?rev=08d65e820bc12a15cda9ebbd4d07964ee620b579#08d65e820bc12a15cda9ebbd4d07964ee620b579"
+source = "git+https://github.com/rf-signing-experiment/rust-tuf?rev=f70f18e50e54fa92b3e9a2036ba16a5a75c3de53#f70f18e50e54fa92b3e9a2036ba16a5a75c3de53"
 dependencies = [
  "chrono",
  "data-encoding",
- "dsse",
  "ed25519-dalek",
  "futures-io",
  "futures-util",
@@ -3295,8 +3244,6 @@ dependencies = [
  "itoa",
  "log",
  "p256",
- "percent-encoding",
- "rsa",
  "semver",
  "serde",
  "serde_json",
@@ -3305,7 +3252,6 @@ dependencies = [
  "spki",
  "tempfile",
  "thiserror 2.0.21",
- "url",
 ]
 
 [[package]]

@@ -39,7 +39,7 @@ impl ChannelToolchainName {
     ///     └── ...
     /// ```
     ///
-    /// Every dated request, whatever the channel, resolves under
+    /// Dated requests for the named channels resolve under
     /// `archive/<year>/<month-day>/`, which the repository signs with one
     /// delegated role per year.
     pub(crate) fn manifest_v3_url(&self, dist_root: &str, process: &Process) -> Result<String> {
@@ -83,9 +83,8 @@ impl ChannelToolchainName {
                     Channel::Version(version) if !version.pre.is_empty() => {
                         format!("{}/channels/beta/{}-{}.toml", dist_root, version, date)
                     }
-                    Channel::Version(_) => {
-                        panic!("not a real-world case")
-                        //format!("{}/channels/stable/{}.toml", dist_root, self.channel)
+                    Channel::Version(version) => {
+                        format!("{}/channels/stable/{}.toml", dist_root, version)
                     }
                 }
             }
