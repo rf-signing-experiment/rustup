@@ -1239,9 +1239,11 @@ async fn prepare_update(dl_cfg: &DownloadCfg<'_>) -> anyhow::Result<Option<Prepa
 
     // Get available version
     info!("checking for self-update (current version: {current_version})");
+    let mut force_archive = false;
     let available_version = match dl_cfg.process.var_opt("RUSTUP_VERSION")? {
         Some(ver) => {
             info!("`RUSTUP_VERSION` has been set to `{ver}`");
+            force_archive = true;
             ver
         }
         None => get_available_rustup_version(dl_cfg).await?,
@@ -1252,8 +1254,17 @@ async fn prepare_update(dl_cfg: &DownloadCfg<'_>) -> anyhow::Result<Option<Prepa
         return Ok(None);
     }
 
-    // Get download URL
-    let url = format!("{update_root}/archive/{available_version}/{tuple}/rustup-init{EXE_SUFFIX}");
+    // We trigger off of whether a static version was specified or we are pulling from the
+    // release-stable.toml latest version. This latest version does NOT come from the archive.
+    // TODO: Discuss, this means that for an available_version from release-stable, we currently
+    //       ignore the version and cant downgrade via this path and dist *must* be rewritten.
+    //       We either need to accept this, or modify the deployment process to make a version dir
+    //       outside of /archive/, and role it on deploy. This breaks out dist path though.
+    let url = if force_archive {
+        format!("{update_root}/archive/{available_version}/{tuple}/rustup-init{EXE_SUFFIX}")
+    } else {
+        format!("{update_root}/dist/{tuple}/rustup-init{EXE_SUFFIX}")
+    };
 
     // Get download path
     let download_url = utils::parse_url(&url)?;
@@ -1261,38 +1272,45 @@ async fn prepare_update(dl_cfg: &DownloadCfg<'_>) -> anyhow::Result<Option<Prepa
 
     // Download the new rustup executable
     info!("downloading self-update (new version: {available_version})");
-    match dl_cfg.download_hash(download_url.as_str()).await {
-        Ok(hash) => {
-            let name = "rustup";
-            let status = dl_cfg.status_for(name, name.len());
+    if dl_cfg.tuf.enabled() {
+        DownloadOptions::try_from(dl_cfg.process)?
+            .start(&download_url, &prepared_updater, Some(dl_cfg.tuf))
+            .download()
+            .await?;
+    } else {
+        match dl_cfg.download_hash(download_url.as_str()).await {
+            Ok(hash) => {
+                let name = "rustup";
+                let status = dl_cfg.status_for(name, name.len());
 
-            let installer = dl_cfg
-                .download_with_retry(&download_url, &hash, &status, dl_cfg.max_retries())
-                .await?;
+                let installer = dl_cfg
+                    .download_with_retry(&download_url, &hash, &status, dl_cfg.max_retries())
+                    .await?;
 
-            utils::rename(
-                name,
-                &installer,
-                &prepared_updater,
-                dl_cfg.permit_copy_rename,
-            )?;
-        }
-        // If the corresponding `.sha256` file is not found, skip hash check and use simple download
-        // as a fallback.
-        Err(e)
-            if matches!(
-                e.downcast_ref::<DownloadError>(),
-                Some(DownloadError::HttpStatus(404) | DownloadError::FileNotFound)
-            ) =>
-        {
-            warn!(url = %download_url, "`.sha256` checksum not found, skipping hash check");
-            DownloadOptions::try_from(dl_cfg.process)?
-                .start(&download_url, &prepared_updater)
-                .download()
-                .await?;
-        }
-        Err(e) => return Err(e),
-    };
+                utils::rename(
+                    name,
+                    &installer,
+                    &prepared_updater,
+                    dl_cfg.permit_copy_rename,
+                )?;
+            }
+            // If the corresponding `.sha256` file is not found, skip hash check and use simple download
+            // as a fallback.
+            Err(e)
+                if matches!(
+                    e.downcast_ref::<DownloadError>(),
+                    Some(DownloadError::HttpStatus(404) | DownloadError::FileNotFound)
+                ) =>
+            {
+                warn!(url = %download_url, "`.sha256` checksum not found, skipping hash check");
+                DownloadOptions::try_from(dl_cfg.process)?
+                    .start(&download_url, &prepared_updater, None)
+                    .download()
+                    .await?;
+            }
+            Err(e) => return Err(e),
+        };
+    }
 
     // Mark as executable
     utils::make_executable(&prepared_updater)?;
@@ -1315,7 +1333,7 @@ async fn get_available_rustup_version(dl_cfg: &DownloadCfg<'_>) -> anyhow::Resul
     let release_file_url = utils::parse_url(&release_file_url)?;
     let release_file = tempdir.path().join("release-stable.toml");
     DownloadOptions::try_from(dl_cfg.process)?
-        .start(&release_file_url, &release_file)
+        .start(&release_file_url, &release_file, Some(dl_cfg.tuf))
         .download()
         .await?;
 

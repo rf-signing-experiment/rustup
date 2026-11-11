@@ -468,7 +468,7 @@ async fn update_with_non_hex_hash_file_exact() {
         .and_then(|url| url.strip_prefix("file://"))
         .unwrap();
     let hash_file = File::create(for_host!(
-        "{update_root}/archive/{TEST_VERSION}/{}/rustup-init{EXE_SUFFIX}.sha256"
+        "{update_root}/dist/{}/rustup-init{EXE_SUFFIX}.sha256"
     ))
     .unwrap();
     write!(&hash_file, "really bad hash").unwrap();
@@ -506,7 +506,7 @@ async fn update_with_short_hash_file_exact() {
     let hash_file = File::options()
         .write(true)
         .open(for_host!(
-            "{update_root}/archive/{TEST_VERSION}/{}/rustup-init{EXE_SUFFIX}.sha256"
+            "{update_root}/dist/{}/rustup-init{EXE_SUFFIX}.sha256"
         ))
         .unwrap();
     hash_file.set_len(15).unwrap();
@@ -542,7 +542,7 @@ async fn update_with_missing_hash_file_exact() {
         .and_then(|url| url.strip_prefix("file://"))
         .unwrap();
     fs::remove_file(for_host!(
-        "{update_root}/archive/{TEST_VERSION}/{}/rustup-init{EXE_SUFFIX}.sha256"
+        "{update_root}/dist/{}/rustup-init{EXE_SUFFIX}.sha256"
     ))
     .unwrap();
 
@@ -777,7 +777,7 @@ async fn update_download_404() {
         .is_ok();
 
     let trip = this_host_tuple();
-    let dist_dir = cx.path().join(format!("archive/{TEST_VERSION}/{trip}"));
+    let dist_dir = cx.path().join(format!("dist/{trip}"));
     let dist_exe = dist_dir.join(format!("rustup-init{EXE_SUFFIX}"));
 
     fs::remove_file(dist_exe).unwrap();
